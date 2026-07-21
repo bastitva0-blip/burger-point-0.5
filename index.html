@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <meta name="theme-color" content="#E85D04" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Burger Point" />
+    <link rel="canonical" href="https://burgerpoint.co.in/" />
+    <meta name="description" content="Order burgers, grilled items, pizza, pasta and more from Burger Point, Jankipuram, Lucknow. Dine-in, takeaway and delivery available." />
+    <meta property="og:title" content="Burger Point — Jankipuram, Lucknow" />
+    <meta property="og:description" content="Order burgers, grilled items, pizza, pasta and more. Dine-in, takeaway and delivery." />
+    <meta property="og:url" content="https://burgerpoint.co.in/" />
+    <meta property="og:type" content="restaurant.restaurant" />
+    <meta name="robots" content="index, follow" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Burger Point — Jankipuram, Lucknow</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.__bpUpdateAvailable = false;
+        window.__bpApplyUpdate = () => {}; // replaced once a registration exists
+
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').then(reg => {
+            const notify = () => {
+              window.__bpUpdateAvailable = true;
+              window.dispatchEvent(new Event('bp:update-available'));
+            };
+
+            window.__bpApplyUpdate = () => { if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING'); };
+
+            // A version was already downloaded and is just sitting there waiting
+            if (reg.waiting) notify();
+
+            // A new version starts downloading — watch it until it's ready
+            reg.addEventListener('updatefound', () => {
+              const nw = reg.installing;
+              if (!nw) return;
+              nw.addEventListener('statechange', () => {
+                // "installed" + an existing controller = this is an update,
+                // not the very first install
+                if (nw.state === 'installed' && navigator.serviceWorker.controller) notify();
+              });
+            });
+
+            // Check for a new sw.js right away instead of waiting for the
+            // browser's own (up to 24hr) background check interval
+            reg.update();
+            // ...and again every time the app is reopened / foregrounded
+            document.addEventListener('visibilitychange', () => {
+              if (document.visibilityState === 'visible') reg.update();
+            });
+          });
+        });
+
+        // Reload once the approved update actually takes control
+        let refreshed = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (refreshed) return;
+          refreshed = true;
+          window.location.reload();
+        });
+      }
+    </script>
+  </body>
+</html>
