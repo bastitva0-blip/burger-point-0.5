@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /rider
+
+Sitemap: https://www.burgerpoint.co.in/sitemap.xml
