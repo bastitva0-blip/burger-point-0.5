@@ -949,6 +949,40 @@ function BillingTab({ bizSettings }) {
     }
   };
 
+
+  // Print KOT only (no save)
+  const handlePrintKOT = () => {
+    if (cart.length === 0) { toast.error("Add at least one item."); return; }
+    try {
+      const payload = buildOrderPayload();
+      printKOT(payload);
+      toast.success("🍳 KOT sent to kitchen");
+    } catch (e) {
+      setPrintErr(e.message || "KOT print failed.");
+    }
+  };
+
+  // Save order + print bill only (no KOT)
+  const handleBillOnly = async () => {
+    if (cart.length === 0) { toast.error("Add at least one item."); return; }
+    setPlacing(true); setPrintErr("");
+    const payload = buildOrderPayload();
+    if (SUPABASE_READY) {
+      const { error } = await supabase.from("orders").insert(payload);
+      if (error) console.error("Billing insert error:", error);
+    }
+    try {
+      printInvoice(payload, bizSettings);
+      toast.success("🧾 Bill printed");
+    } catch (e) {
+      setPrintErr(e.message || "Print failed — order saved.");
+    }
+    setLastOrder(payload);
+    setCart([]); setNote(""); setDiscount(0);
+    setCustName(""); setCustPhone(""); setTableLabel("");
+    setPlacing(false);
+  };
+
   const categories = Object.keys(grouped);
 
   // Height of the POS area below the top bar — fills the viewport
@@ -1188,18 +1222,37 @@ function BillingTab({ bizSettings }) {
                 </div>
               )}
               <div className="px-3 pb-3 pt-1 space-y-1.5">
-                {lastOrder && (
-                  <button onClick={handleReprint}
-                    className="w-full flex items-center justify-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold py-2 rounded-xl transition-colors">
-                    <Printer size={12} /> Reprint last bill
+                {/* KOT + Bill side by side */}
+                <div className="flex gap-1.5">
+                  <button onClick={handlePrintKOT} disabled={placing || cart.length === 0}
+                    className="flex-1 flex items-center justify-center gap-1 bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-black py-2.5 rounded-xl shadow-sm disabled:opacity-50 active:scale-95 transition-all">
+                    🍳 Print KOT
                   </button>
-                )}
+                  <button onClick={handleBillOnly} disabled={placing || cart.length === 0}
+                    className="flex-1 flex items-center justify-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-black py-2.5 rounded-xl shadow-sm disabled:opacity-50 active:scale-95 transition-all">
+                    <Printer size={11} /> Print Bill
+                  </button>
+                </div>
+                {/* KOT + Bill together (original combined action) */}
                 <button onClick={handleBill} disabled={placing || cart.length === 0}
                   className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white font-black text-sm py-3 rounded-xl shadow-md disabled:opacity-50 active:scale-95 transition-all">
                   {placing
                     ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Billing…</>
-                    : <><Printer size={14} /> Bill & Print — ₹{grandTotal}</>}
+                    : <><Printer size={14} /> KOT + Bill — ₹{grandTotal}</>}
                 </button>
+                {/* Reprint last */}
+                {lastOrder && (
+                  <div className="flex gap-1.5">
+                    <button onClick={() => { try { printKOT(lastOrder); toast.success("KOT reprinted"); } catch(e) { setPrintErr(e.message); } }}
+                      className="flex-1 flex items-center justify-center gap-1 bg-stone-100 hover:bg-stone-200 text-stone-600 text-[10px] font-bold py-1.5 rounded-xl transition-colors">
+                      🍳 Reprint KOT
+                    </button>
+                    <button onClick={handleReprint}
+                      className="flex-1 flex items-center justify-center gap-1 bg-stone-100 hover:bg-stone-200 text-stone-600 text-[10px] font-bold py-1.5 rounded-xl transition-colors">
+                      <Printer size={10} /> Reprint Bill
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
