@@ -1,4 +1,3 @@
-#adminpanel 
 import { useState, useEffect, useCallback, useRef } from "react";
 import QRCode from "qrcode";
 import { useToast, OrderCardSkeleton, SalesSkeleton, CustomerRowSkeleton, RiderCardSkeleton } from "./ui.jsx";
