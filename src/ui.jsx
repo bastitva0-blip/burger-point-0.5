@@ -67,6 +67,7 @@ export function ToastProvider({ children }) {
             <p className="flex-1 text-sm font-medium text-stone-800 leading-snug">{t.message}</p>
             <button
               onClick={() => remove(t.id)}
+              aria-label="Dismiss notification"
               className="flex-shrink-0 text-stone-400 hover:text-stone-600 transition-colors"
             >
               <X size={13} />
@@ -343,6 +344,7 @@ export function SavedAddressPicker({ addresses, onSelect, onRemove }) {
             </button>
             <button
               onClick={() => onRemove(a.fullAddress)}
+              aria-label="Remove address"
               className="text-stone-300 hover:text-red-400 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
             >
               <X size={12} />
