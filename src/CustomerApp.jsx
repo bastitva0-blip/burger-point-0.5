@@ -263,7 +263,7 @@ function ItemModal({ item, onClose, onAdd }) {
 }
 
 // ── CART DRAWER ───────────────────────────────────────────
-function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace }) {
+function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null }) {
   const [note, setNote]           = useState("");
   const [promoCode, setPromoCode] = useState("");
   const [promo, setPromo]         = useState(null);
@@ -348,9 +348,21 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
         )}
 
         <div className="flex-1 overflow-y-auto px-5 py-3">
+          {/* Feature 8: unavailability warning */}
+          {(() => {
+            const affected = cart.filter(it => unavailableIds.has(it.id));
+            if (!affected.length) return null;
+            return (
+              <div className="bg-amber-50 border border-amber-300 rounded-2xl px-4 py-3 mb-3">
+                {affected.map(it => (
+                  <p key={it.id} className="text-xs font-bold text-amber-800">⚠️ {it.name} is no longer available — please remove it before ordering.</p>
+                ))}
+              </div>
+            );
+          })()}
           {/* Items */}
           {cart.map((item, i) => (
-            <div key={i} className="flex items-start gap-3 py-3 border-b border-stone-50 last:border-0">
+            <div key={i} className={`flex items-start gap-3 py-3 border-b border-stone-50 last:border-0 ${unavailableIds.has(item.id) ? "bg-red-50 rounded-xl px-2 border-red-200 border" : ""}`}>
               <ItemThumb item={item} className="w-12 h-12" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-stone-800 leading-tight">{item.name}</p>
@@ -447,6 +459,9 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
         </div>
 
         <div className="px-5 pb-6 pt-3 border-t border-stone-100 flex-shrink-0">
+          {validationError && (
+            <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 mb-3 text-xs text-red-700 font-medium">{validationError}</div>
+          )}
           <button onClick={() => onPlace({ note, total, discount, promoCode: promo?.code, deliveryFee, packingCharge, gstAmount, distanceKm: deliveryCalc?.distanceKm ?? null })}
             disabled={!canPlace}
             className="w-full bg-gradient-to-r from-orange-500 to-red-600 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none">
@@ -558,9 +573,65 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
   const [liveOrder,   setLiveOrder]   = useState(order); // tracks full order for route data
   const [reviewDone,  setReviewDone]  = useState(false);
   const [thumbSent,   setThumbSent]   = useState(null);
+  // Feature 1: stale banner
+  const [isStale,     setIsStale]     = useState(false);
+  // Feature 3: offline banner
+  const [isOffline,   setIsOffline]   = useState(!navigator.onLine);
+  // Feature 4: live ETA countdown
+  const [etaText,     setEtaText]     = useState(null);
   const [waitTimes]                   = useState(() => {
     try { return JSON.parse(localStorage.getItem(SS_WAIT) || "{}"); } catch { return {}; }
   });
+
+  // Feature 1: stale banner — check every 30s if accepted for >25 min
+  useEffect(() => {
+    if (status !== "accepted") { setIsStale(false); return; }
+    const check = () => {
+      const ageMs = Date.now() - new Date(order.created_at).getTime();
+      setIsStale(ageMs > 25 * 60 * 1000);
+    };
+    check();
+    const t = setInterval(check, 30000);
+    return () => clearInterval(t);
+  }, [status, order.created_at]);
+
+  // Feature 3: offline banner
+  useEffect(() => {
+    const goOnline = () => {
+      setIsOffline(false);
+      // Re-fetch order status immediately on reconnect
+      if (SUPABASE_READY && order.id) {
+        supabase.from("orders").select("status, rider_name, rider_phone").eq("id", order.id).single()
+          .then(({ data }) => { if (data) applyUpdateRef.current?.(data); });
+      }
+    };
+    const goOffline = () => setIsOffline(true);
+    window.addEventListener("online",  goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => { window.removeEventListener("online", goOnline); window.removeEventListener("offline", goOffline); };
+  }, [order.id]);
+
+  // Feature 4: ETA countdown
+  useEffect(() => {
+    const ot = order.order_type || "dine-in";
+    const defaultWait = waitTimes[ot] || (ot === "delivery" ? 40 : ot === "takeaway" ? 20 : 15);
+    if (status !== "pending" && status !== "accepted") { setEtaText(null); return; }
+    const target = new Date(order.created_at).getTime() + defaultWait * 60000;
+    const tick = () => {
+      const diff = Math.round((target - Date.now()) / 1000);
+      if (diff <= 0) { setEtaText("Any moment now…"); }
+      else {
+        const m = Math.floor(diff / 60), s = diff % 60;
+        setEtaText(`${m}:${String(s).padStart(2, "0")}`);
+      }
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [status, order.created_at, order.order_type, waitTimes]);
+
+  // applyUpdateRef so offline handler can call applyUpdate without stale closure
+  const applyUpdateRef = useRef(null);
 
   // Clear persisted order when served or cancelled — delay so customer refreshing
   // mid-completion still sees the served/done screen instead of jumping back to menu
@@ -574,6 +645,13 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     }
   }, [status]);
 
+  // Feature 7: request notification permission on mount
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
   useEffect(() => {
     if (!SUPABASE_READY || !order.id) return;
 
@@ -582,6 +660,22 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     const applyUpdate = (data) => {
       if (!data) return;
       if (data.status) {
+        // Feature 7: push notification on status change
+        const prevStatus = applyUpdateRef.current?._lastStatus;
+        if (data.status !== prevStatus && "Notification" in window && Notification.permission === "granted") {
+          const NOTIF_MSGS = {
+            accepted:  "👨‍🍳 Your order is being prepared!",
+            ready:     "✅ Your order is ready!",
+            dispatched:"🛵 Your rider is on the way!",
+            served:    "😊 Order delivered — enjoy!",
+            cancelled: "😔 Your order was cancelled",
+          };
+          const msg = NOTIF_MSGS[data.status];
+          if (msg) {
+            const n = new Notification("Burger Point", { body: msg });
+            setTimeout(() => n.close(), 6000);
+          }
+        }
         setStatus(data.status);
         // As soon as the order reaches a terminal state, wipe the persisted copies
         // so that a page-refresh no longer shows a stale "dispatched" or "pending" screen.
@@ -593,7 +687,10 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
       if (data.rider_name)  setRiderName(data.rider_name);
       if (data.rider_phone) setRiderPhone(data.rider_phone);
       setLiveOrder(prev => ({ ...prev, ...data }));
+      // keep ref in sync for offline handler
+      if (applyUpdateRef.current) applyUpdateRef.current._lastStatus = data.status || applyUpdateRef.current._lastStatus;
     };
+    applyUpdateRef.current = applyUpdate;
 
     const ORDER_FIELDS = "status, rider_name, rider_phone, route_geometry, route_distance_km, route_eta_minutes, delivery_started_at, customer_lat, customer_lng, cancel_reason";
 
@@ -711,8 +808,33 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     );
   }
 
+  // Feature 6: WhatsApp order summary
+  const waOrderSummary = (() => {
+    const lines = (order.items || []).map(it => `• ${it.name}${it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×${it.qty} — ₹${it.finalPrice * it.qty}`);
+    const msg = `🍔 *Burger Point Order*\n\n${lines.join("\n")}\n\n*Total: ₹${order.total}*`;
+    const phone = order.customer_phone;
+    return phone
+      ? `https://wa.me/91${phone}?text=${encodeURIComponent(msg)}`
+      : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  })();
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 to-amber-50 flex flex-col">
+      {/* Feature 1: stale banner */}
+      {isStale && status === "accepted" && (
+        <div className="sticky top-0 z-20 bg-yellow-400 text-yellow-900 px-4 py-2.5 flex items-center justify-between gap-3">
+          <span className="text-xs font-bold flex-1">Still preparing — taking a little longer than usual 🙏</span>
+          <a href="tel:+919194008822" className="flex-shrink-0 bg-yellow-900/20 text-yellow-900 text-xs font-black px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+            <Phone size={11} /> Call
+          </a>
+        </div>
+      )}
+      {/* Feature 3: offline banner */}
+      {isOffline && (
+        <div className="bg-stone-700 text-white text-xs font-medium px-4 py-2 text-center">
+          You're offline — status will update when you reconnect
+        </div>
+      )}
       <div className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-5 pt-10 pb-8 flex-shrink-0">
         <div className="max-w-lg mx-auto">
           <div className="flex items-center gap-3 mb-3">
@@ -725,10 +847,15 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           <div className="bg-white/20 rounded-2xl px-4 py-3 mb-2">
             <p className="text-orange-100 text-xs">{steps[curIdx]?.sub}</p>
           </div>
-          {waitMins && (
+          {/* Feature 4: live ETA countdown */}
+          {etaText && (
             <div className="bg-white/15 rounded-xl px-3 py-2 flex items-center gap-2">
               <Clock size={13} className="text-orange-200" />
-              <span className="text-xs text-orange-100">Estimated wait: <span className="font-bold text-white">~{waitMins} mins</span></span>
+              <span className="text-xs text-orange-100">
+                {etaText === "Any moment now…"
+                  ? <span className="font-bold text-white">Any moment now…</span>
+                  : <>Estimated wait: <span className="font-bold text-white">{etaText}</span></>}
+              </span>
             </div>
           )}
           {order.payment_method && (
@@ -790,12 +917,20 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
             <p className="text-xs font-bold text-purple-800 mb-2 flex items-center gap-1.5"><Bike size={13} /> Your Delivery Rider</p>
             <div className="flex items-center justify-between">
               <div><p className="font-bold text-stone-800">{riderName}</p>{riderPhone && <p className="text-sm text-stone-500">{riderPhone}</p>}</div>
-              {riderPhone && (
-                <a href={`tel:${riderPhone}`} className="bg-green-500 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm">
-                  <Phone size={12} /> Call
-                </a>
-              )}
             </div>
+            {/* Feature 5: rider call + WA buttons */}
+            {riderPhone && (
+              <div className="flex gap-2 mt-3">
+                <a href={`tel:${riderPhone}`} className="flex-1 flex items-center justify-center gap-1.5 bg-green-500 text-white text-xs font-bold py-2.5 rounded-xl shadow-sm">
+                  📞 Call Rider
+                </a>
+                <a href={`https://wa.me/91${riderPhone}?text=${encodeURIComponent("Hi, I'm waiting for my Burger Point order. Can you share your ETA?")}`}
+                  target="_blank" rel="noreferrer"
+                  className="flex-1 flex items-center justify-center gap-1.5 bg-green-100 text-green-800 text-xs font-bold py-2.5 rounded-xl shadow-sm">
+                  💬 WhatsApp Rider
+                </a>
+              </div>
+            )}
           </div>
         )}
 
@@ -838,7 +973,13 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           {order.note && <p className="text-xs text-stone-400 italic mt-2">Note: "{order.note}"</p>}
         </div>
 
-        <a href="tel:+919194008822" className="mt-4 w-full flex items-center justify-center gap-2 border border-orange-200 text-orange-600 font-bold text-sm py-3 rounded-2xl active:scale-95 transition-transform">
+        {/* Feature 6: WhatsApp order summary */}
+        <a href={waOrderSummary} target="_blank" rel="noreferrer"
+          className="mt-3 w-full flex items-center justify-center gap-2 border border-green-200 text-green-700 font-bold text-sm py-3 rounded-2xl active:scale-95 transition-transform bg-green-50">
+          📲 Send to WhatsApp
+        </a>
+
+        <a href="tel:+919194008822" className="mt-3 w-full flex items-center justify-center gap-2 border border-orange-200 text-orange-600 font-bold text-sm py-3 rounded-2xl active:scale-95 transition-transform">
           <Phone size={15} /> Call Restaurant
         </a>
 
@@ -1176,6 +1317,29 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
 
   const bestsellers = useBestsellers(menu);
 
+  // Feature 8: real-time cart unavailability
+  const [unavailableCartIds, setUnavailableCartIds] = useState(new Set());
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    const channel = supabase.channel("menu-items-avail")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "menu_items" }, (payload) => {
+        const item = payload.new;
+        if (item.is_available === false) {
+          setUnavailableCartIds(prev => {
+            // only flag if item is in cart
+            const cartIds = cart.map(c => c.id);
+            if (cartIds.includes(item.id)) return new Set([...prev, item.id]);
+            return prev;
+          });
+        } else {
+          setUnavailableCartIds(prev => { const n = new Set(prev); n.delete(item.id); return n; });
+        }
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Auto-verify resumed order status on mount
   useEffect(() => {
     if (!placed || !SUPABASE_READY) return;
@@ -1316,8 +1480,25 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     try { await navigator.share({ title: "Burger Point Cart", url }); } catch { await navigator.clipboard?.writeText(url); toast.success("Cart link copied!"); }
   };
 
-  const reorder = (items) => {
-    items.forEach(item => addItem({ ...item, qty: item.qty || 1 }));
+  const reorder = async (items) => {
+    let toAdd = items;
+    let skipped = [];
+    // Check availability for items that have an id
+    const ids = items.map(i => i.id).filter(Boolean);
+    if (SUPABASE_READY && ids.length > 0) {
+      const { data } = await supabase.from("menu_items").select("id, name, is_available").in("id", ids);
+      if (data) {
+        const unavailSet = new Set(data.filter(d => d.is_available === false).map(d => d.id));
+        skipped = items.filter(i => unavailSet.has(i.id));
+        toAdd = items.filter(i => !unavailSet.has(i.id));
+      }
+    }
+    toAdd.forEach(item => addItem({ ...item, qty: item.qty || 1 }));
+    if (skipped.length > 0) {
+      toast.info(`Skipped: ${skipped.map(i => i.name).join(", ")} (no longer available)`);
+    }
+    // Scroll to menu
+    setTimeout(() => menuAreaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
   };
 
   const updateAvailable = useAppUpdateAvailable();
@@ -1325,8 +1506,27 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   // pending checkout opts — held while we collect customer info
   const [pendingOpts, setPendingOpts] = useState(null);
 
-  const handlePlaceAttempt = (opts) => {
+  const [cartValidationError, setCartValidationError] = useState(null); // Feature 9
+
+  const handlePlaceAttempt = async (opts) => {
     if (updateAvailable) { setShowCart(false); setShowUpdateGate(true); return; }
+
+    // Feature 9: validate all cart items are still available
+    if (SUPABASE_READY && cart.length > 0) {
+      const ids = cart.map(i => i.id).filter(Boolean);
+      if (ids.length > 0) {
+        const { data } = await supabase.from("menu_items").select("id, name, is_available").in("id", ids);
+        if (data) {
+          const unavail = data.filter(d => d.is_available === false);
+          if (unavail.length > 0) {
+            const names = unavail.map(d => d.name).join(", ");
+            setCartValidationError(`Sorry, these items are no longer available: ${names}. Please remove them to continue.`);
+            return;
+          }
+        }
+      }
+    }
+    setCartValidationError(null);
     setShowCart(false);
     // For delivery/takeaway, collect info at checkout time if not already saved
     const needsInfo = (orderType === "delivery" || orderType === "takeaway")
@@ -1347,8 +1547,11 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     if (pendingOpts) { setShowRazorpay(pendingOpts); setPendingOpts(null); }
   };
 
+  const [orderError,    setOrderError]    = useState(null);  // Feature 2: placement error
+  const [retrying,      setRetrying]      = useState(false);
+
   const finaliseOrder = async ({ note, total, discount, promoCode, deliveryFee, packingCharge, gstAmount, distanceKm }, paymentMethod, razorpayPaymentId = null) => {
-    setShowRazorpay(null); setPlacing(true);
+    setShowRazorpay(null); setPlacing(true); setOrderError(null);
     const payload = {
       id: crypto.randomUUID(),
       table_code: code || null,
@@ -1370,8 +1573,14 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     if (SUPABASE_READY) {
       try {
         const { error } = await supabase.from("orders").insert(payload);
-        if (error) console.error("Order save error:", error.message, error);
-      } catch (err) { console.error("Order save error (network):", err); }
+        if (error) throw error;
+      } catch (err) {
+        console.error("Order save error:", err);
+        setPlacing(false);
+        // Feature 2: show error card — do NOT clear cart
+        setOrderError({ payload, paymentMethod, razorpayPaymentId });
+        return;
+      }
     }
     saveHistory(payload);
     setTimeout(() => {
@@ -1381,6 +1590,41 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       setPlaced(payload);
     }, 800);
   };
+
+  const retryOrder = async () => {
+    if (!orderError) return;
+    setRetrying(true);
+    const { payload, paymentMethod } = orderError;
+    try {
+      const { error } = await supabase.from("orders").insert({ ...payload, id: crypto.randomUUID() });
+      if (error) throw error;
+      setOrderError(null);
+      saveHistory(payload);
+      setCart([]); setRetrying(false);
+      sessionStorage.setItem(SS_ORDER, JSON.stringify(payload));
+      localStorage.setItem(LS_ACTIVE_ORDER, JSON.stringify(payload));
+      setPlaced(payload);
+    } catch (err) {
+      console.error("Retry error:", err);
+      setRetrying(false);
+    }
+  };
+
+  // Feature 2: full-screen error card
+  if (orderError) return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-red-50 gap-5 p-6 text-center">
+      <div className="w-20 h-20 rounded-full bg-red-100 flex items-center justify-center text-4xl">❌</div>
+      <div>
+        <p className="font-black text-stone-800 text-xl mb-2">Order couldn't be placed</p>
+        <p className="text-sm text-stone-500">Check your connection and try again — your cart is still saved.</p>
+      </div>
+      <button onClick={retryOrder} disabled={retrying}
+        className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 text-white px-8 py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-60">
+        {retrying ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Retrying…</> : "Try Again"}
+      </button>
+      <button onClick={() => setOrderError(null)} className="text-xs text-stone-400 underline">Go back to cart</button>
+    </div>
+  );
 
   if (placing) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-orange-50 gap-4">
@@ -1582,7 +1826,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       {itemModal && <ItemModal item={itemModal} onClose={() => setItemModal(null)} onAdd={entry => { addItem(entry); setItemModal(null); }} />}
       {showCart && (
         <CartDrawer cart={cart} tableLabel={tableLabel} orderType={orderType} customerInfo={customerInfo} settings={bizSettings}
-          onClose={() => setShowCart(false)} onQty={handleQty} onRemove={i => setCart(p => p.filter((_, x) => x !== i))} onPlace={handlePlaceAttempt} />
+          onClose={() => setShowCart(false)} onQty={handleQty} onRemove={i => { setCart(p => p.filter((_, x) => x !== i)); setCartValidationError(null); }} onPlace={handlePlaceAttempt}
+          unavailableIds={unavailableCartIds} validationError={cartValidationError} />
       )}
       {showRazorpay && (
         <RazorpayModal amount={showRazorpay.total} customerName={customerInfo?.name || tableLabel || "Customer"} customerPhone={customerInfo?.phone}
