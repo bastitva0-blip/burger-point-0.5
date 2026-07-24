@@ -577,22 +577,38 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
   useEffect(() => {
     if (!SUPABASE_READY || !order.id) return;
 
+    const TERMINAL = new Set(["cancelled", "served"]);
+
     const applyUpdate = (data) => {
       if (!data) return;
-      if (data.status)      setStatus(data.status);
+      if (data.status) {
+        setStatus(data.status);
+        // As soon as the order reaches a terminal state, wipe the persisted copies
+        // so that a page-refresh no longer shows a stale "dispatched" or "pending" screen.
+        if (TERMINAL.has(data.status)) {
+          localStorage.removeItem(LS_ACTIVE_ORDER);
+          sessionStorage.removeItem(SS_ORDER);
+        }
+      }
       if (data.rider_name)  setRiderName(data.rider_name);
       if (data.rider_phone) setRiderPhone(data.rider_phone);
       setLiveOrder(prev => ({ ...prev, ...data }));
     };
 
-    // 1. Fetch current state immediately on mount
-    supabase
-      .from("orders")
-      .select("status, rider_name, rider_phone, route_geometry, route_distance_km, route_eta_minutes, delivery_started_at, customer_lat, customer_lng, cancel_reason")
-      .eq("id", order.id).single()
-      .then(({ data, error }) => { if (!error) applyUpdate(data); });
+    const ORDER_FIELDS = "status, rider_name, rider_phone, route_geometry, route_distance_km, route_eta_minutes, delivery_started_at, customer_lat, customer_lng, cancel_reason";
+
+    // 1. Fetch current state immediately on mount; retry once on failure
+    const fetchNow = (retryMs = 0) => {
+      supabase.from("orders").select(ORDER_FIELDS).eq("id", order.id).single()
+        .then(({ data, error }) => {
+          if (!error) applyUpdate(data);
+          else if (retryMs > 0) setTimeout(() => fetchNow(0), retryMs);
+        });
+    };
+    fetchNow(3000); // initial fetch; retry after 3 s if it fails
 
     // 2. Subscribe to real-time changes — fires the instant admin updates the row
+    let fallbackTimer = null;
     const channel = supabase
       .channel(`order-${order.id}`)
       .on(
@@ -601,24 +617,29 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
         (payload) => applyUpdate(payload.new)
       )
       .subscribe((state) => {
-        // Fallback: if realtime can't connect, poll every 8 seconds instead
-        if (state === "CHANNEL_ERROR" || state === "TIMED_OUT") {
-          const t = setInterval(() => {
-            supabase
-              .from("orders")
-              .select("status, rider_name, rider_phone, route_geometry, route_distance_km, route_eta_minutes, delivery_started_at, customer_lat, customer_lng, cancel_reason")
-              .eq("id", order.id).single()
-              .then(({ data, error }) => { if (!error) applyUpdate(data); });
-          }, 8000);
-          channel._fallbackTimer = t;
+        // Fallback: if realtime can't connect, poll every 5 seconds instead
+        if ((state === "CHANNEL_ERROR" || state === "TIMED_OUT") && !fallbackTimer) {
+          fallbackTimer = setInterval(() => fetchNow(0), 5000);
+        } else if (state === "SUBSCRIBED" && fallbackTimer) {
+          clearInterval(fallbackTimer);
+          fallbackTimer = null;
         }
       });
 
     return () => {
-      if (channel._fallbackTimer) clearInterval(channel._fallbackTimer);
+      if (fallbackTimer) clearInterval(fallbackTimer);
       supabase.removeChannel(channel);
     };
   }, [order.id]);
+
+  // Sync internal status when parent CustomerApp's auto-verify updates the prop.
+  // (useState only initialises once, so prop changes after mount are ignored without this.)
+  useEffect(() => {
+    if (order.status && order.status !== status) {
+      setStatus(order.status);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order.status]);
 
   const submitRating = async (rating) => {
     setThumbSent(rating);
@@ -665,11 +686,11 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     );
   }
 
-  // Show the delivery map as soon as the order is placed — DeliveryTracker
-  // itself only animates the rider/route once one is actually assigned,
-  // so early on it just shows the restaurant + a "preparing" message.
+  // Show the delivery map only for active delivery orders.
+  // Guard against cancelled / served states slipping through (e.g. stale localStorage
+  // on refresh before the fetch completes).
   const isDelivery = (liveOrder.order_type || order.order_type) === "delivery";
-  if (isDelivery) {
+  if (isDelivery && status !== "cancelled" && status !== "served") {
     return (
       <Suspense fallback={
         <div className="fixed inset-0 bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center">
@@ -1163,7 +1184,11 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         if (!data) return;
         const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
         if (!ACTIVE_STATUSES.has(data.status)) {
-          // Order is done — show tracker briefly so user sees served state, then it clears itself
+          // Terminal (served / cancelled) — clear persisted copies NOW so a subsequent
+          // refresh doesn't load a stale "dispatched" status and flash the wrong screen.
+          localStorage.removeItem(LS_ACTIVE_ORDER);
+          sessionStorage.removeItem(SS_ORDER);
+          // Still update state so OrderTracker can render the correct done/cancelled screen.
           setPlaced(updated);
         } else {
           setPlaced(updated);
