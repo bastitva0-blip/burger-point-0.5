@@ -521,7 +521,7 @@ function LoginScreen({ onLogin }) {
                 onKeyDown={e => e.key === "Enter" && login()}
                 placeholder="••••••••"
                 className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-4 py-3 outline-none text-stone-700 pr-10" />
-              <button onClick={() => setShow(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">
+              <button onClick={() => setShow(s => !s)} aria-label="Toggle password visibility" className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">
                 {show ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
@@ -1035,7 +1035,7 @@ function BillingTab({ bizSettings }) {
               <Search size={11} className="text-stone-400 flex-shrink-0" />
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
                 className="w-full text-[11px] bg-transparent outline-none text-stone-700 placeholder-stone-400" />
-              {search && <button onClick={() => setSearch("")}><X size={10} className="text-stone-400" /></button>}
+              {search && <button onClick={() => setSearch("")} aria-label="Clear search"><X size={10} className="text-stone-400" /></button>}
             </div>
           </div>
           {/* Scrollable category list */}
