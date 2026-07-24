@@ -520,7 +520,7 @@ function LoginScreen({ onLogin }) {
                 onChange={e => { setPwd(e.target.value); setErr(""); }}
                 onKeyDown={e => e.key === "Enter" && login()} placeholder="••••••••"
                 className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl px-4 py-3.5 outline-none text-stone-700 pr-10" />
-              <button onClick={() => setShow(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">
+              <button onClick={() => setShow(s => !s)} aria-label="Toggle password visibility" className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">
                 {show ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
