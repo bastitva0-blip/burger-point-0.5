@@ -2976,6 +2976,23 @@ function useOrderNotifications(orders, authed) {
     prevIdsRef.current = new Set(orders.filter(o => o.status === "pending").map(o => o.id));
   }, [orders, playChime, startFlash, stopAll]);
 
+  // Feature 11: re-alert for stuck pending orders (>5 min) every 60s
+  const stuckAlertRef = useRef(null);
+  useEffect(() => {
+    if (!authed) return;
+    stuckAlertRef.current = setInterval(() => {
+      const now = Date.now();
+      const stuck = orders.filter(o =>
+        o.status === "pending" && (now - new Date(o.created_at).getTime()) > 5 * 60 * 1000
+      );
+      if (stuck.length > 0) {
+        playChime();
+        startFlash(stuck.length);
+      }
+    }, 60000);
+    return () => clearInterval(stuckAlertRef.current);
+  }, [orders, authed, playChime, startFlash]);
+
   useEffect(() => () => {
     clearInterval(repeatRef.current);
     clearInterval(flashRef.current);
