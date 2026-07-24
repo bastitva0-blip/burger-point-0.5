@@ -1385,6 +1385,156 @@ function TablesTab({ orders }) {
 }
 
 // ─────────────────────────────────────────────────────────
+//  VARIANT BUILDER — replaces raw JSON textarea
+// ─────────────────────────────────────────────────────────
+const VARIANT_PRESETS = [
+  { label: "Half / Full",        variants: [{ label: "Half", price: "" }, { label: "Full", price: "" }] },
+  { label: "Regular / Large",    variants: [{ label: "Regular", price: "" }, { label: "Large", price: "" }] },
+  { label: "Small / Med / Large",variants: [{ label: "Small", price: "" }, { label: "Medium", price: "" }, { label: "Large", price: "" }] },
+  { label: "Tall / Full",        variants: [{ label: "Tall", price: "" }, { label: "Full", price: "" }] },
+];
+
+function VariantBuilder({ variants, onChange }) {
+  const addRow    = () => onChange([...variants, { label: "", price: "" }]);
+  const removeRow = (i) => onChange(variants.filter((_, x) => x !== i));
+  const update    = (i, field, val) => onChange(variants.map((v, x) => x === i ? { ...v, [field]: val } : v));
+
+  return (
+    <div className="space-y-2">
+      {variants.length === 0 && (
+        <div>
+          <p className="text-[10px] text-stone-400 mb-2">Quick-fill a common pattern:</p>
+          <div className="flex gap-1.5 flex-wrap">
+            {VARIANT_PRESETS.map(p => (
+              <button key={p.label} type="button" onClick={() => onChange(p.variants.map(v => ({ ...v })))}
+                className="text-[10px] font-bold bg-orange-50 text-orange-600 border border-orange-200 px-2.5 py-1 rounded-lg hover:bg-orange-100 transition-colors">
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {variants.map((v, i) => (
+        <div key={i} className="flex gap-2 items-center">
+          <input value={v.label} onChange={e => update(i, "label", e.target.value)}
+            placeholder="e.g. Half, Full, Large…"
+            className="flex-1 text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-2 outline-none" />
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 text-sm font-bold">₹</span>
+            <input type="number" min="0" value={v.price} onChange={e => update(i, "price", e.target.value)}
+              placeholder="0"
+              className="w-24 text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl pl-7 pr-3 py-2 outline-none" />
+          </div>
+          <button type="button" onClick={() => removeRow(i)}
+            className="w-8 h-8 flex items-center justify-center rounded-xl bg-red-50 text-red-400 hover:bg-red-100 flex-shrink-0 transition-colors">
+            <Trash2 size={13} />
+          </button>
+        </div>
+      ))}
+
+      {variants.length > 0 && (
+        <button type="button" onClick={addRow}
+          className="w-full flex items-center justify-center gap-1.5 border-2 border-dashed border-orange-200 text-orange-500 text-xs font-bold py-2 rounded-xl hover:bg-orange-50 transition-colors">
+          <Plus size={12} /> Add another size
+        </button>
+      )}
+
+      {variants.length === 0 && (
+        <button type="button" onClick={addRow}
+          className="w-full flex items-center justify-center gap-1.5 border-2 border-dashed border-stone-200 text-stone-400 text-xs font-bold py-2 rounded-xl hover:border-orange-200 hover:text-orange-500 transition-colors">
+          <Plus size={12} /> Add custom size
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+//  ADDON BUILDER — replaces raw JSON textarea
+// ─────────────────────────────────────────────────────────
+function AddonBuilder({ addons, onChange }) {
+  const removeAddon   = (i) => onChange(addons.filter((_, x) => x !== i));
+  const updateAddon   = (i, field, val) => onChange(addons.map((a, x) => x === i ? { ...a, [field]: val } : a));
+  const updateOptions = (i, raw) => {
+    const opts = raw.split(",").map(s => s.trim()).filter(Boolean);
+    onChange(addons.map((a, x) => x === i ? { ...a, options: opts } : a));
+  };
+
+  const addToggle = () => onChange([...addons, {
+    id: `addon_${Date.now()}`, label: "", type: "toggle", price: 0,
+  }]);
+  const addSelect = () => onChange([...addons, {
+    id: `choice_${Date.now()}`, label: "Spice Level", type: "select",
+    options: ["Mild", "Medium", "Extra Hot"], price: 0,
+  }]);
+
+  return (
+    <div className="space-y-3">
+      {addons.map((a, i) => (
+        <div key={i} className="bg-stone-50 border-2 border-stone-100 rounded-xl p-3 space-y-2">
+          {/* Label + delete */}
+          <div className="flex gap-2 items-center">
+            <span className="text-[10px] font-black text-stone-400 uppercase tracking-wider flex-shrink-0">Name</span>
+            <input value={a.label} onChange={e => updateAddon(i, "label", e.target.value)}
+              placeholder="e.g. Extra Cheese, Spice Level…"
+              className="flex-1 text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-2 outline-none bg-white" />
+            <button type="button" onClick={() => removeAddon(i)}
+              className="w-8 h-8 flex items-center justify-center rounded-xl bg-red-50 text-red-400 hover:bg-red-100 flex-shrink-0 transition-colors">
+              <Trash2 size={13} />
+            </button>
+          </div>
+
+          {/* Type row */}
+          <div className="flex gap-2 items-center flex-wrap">
+            <select value={a.type} onChange={e => updateAddon(i, "type", e.target.value)}
+              className="text-xs border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-1.5 outline-none bg-white font-bold text-stone-700">
+              <option value="toggle">☑️ Checkbox (yes / no)</option>
+              <option value="select">🔘 Choice from a list</option>
+            </select>
+
+            {a.type === "toggle" && (
+              <div className="flex items-center gap-1.5 bg-white border-2 border-stone-200 rounded-xl px-3 py-1.5">
+                <span className="text-xs text-stone-400 font-bold">Extra charge</span>
+                <span className="text-xs text-stone-400">+₹</span>
+                <input type="number" min="0" value={a.price ?? 0} onChange={e => updateAddon(i, "price", Number(e.target.value))}
+                  className="w-16 text-sm font-bold text-stone-700 bg-transparent outline-none" />
+              </div>
+            )}
+          </div>
+
+          {/* Select options */}
+          {a.type === "select" && (
+            <div>
+              <p className="text-[10px] text-stone-400 font-bold mb-1">Choices <span className="font-normal">(separate with commas)</span></p>
+              <input value={(a.options || []).join(", ")} onChange={e => updateOptions(i, e.target.value)}
+                placeholder="e.g. Mild, Medium, Extra Hot"
+                className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-2 outline-none bg-white" />
+              <div className="flex gap-1 mt-1.5 flex-wrap">
+                {(a.options || []).map((opt, j) => (
+                  <span key={j} className="text-[10px] bg-white border border-stone-200 text-stone-600 px-2 py-0.5 rounded-full">{opt}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+
+      <div className="flex gap-2">
+        <button type="button" onClick={addToggle}
+          className="flex-1 flex items-center justify-center gap-1.5 border-2 border-dashed border-orange-200 text-orange-500 text-xs font-bold py-2.5 rounded-xl hover:bg-orange-50 transition-colors">
+          <Plus size={12} /> Add Checkbox
+        </button>
+        <button type="button" onClick={addSelect}
+          className="flex-1 flex items-center justify-center gap-1.5 border-2 border-dashed border-blue-200 text-blue-500 text-xs font-bold py-2.5 rounded-xl hover:bg-blue-50 transition-colors">
+          <Plus size={12} /> Add Choice List
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
 //  MENU MANAGEMENT TAB
 // ─────────────────────────────────────────────────────────
 function MenuTab() {
@@ -1393,8 +1543,8 @@ function MenuTab() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null); // item being edited
 
-  // Form state
-  const blankForm = { name: "", category: "burgers", price: "", img_url: "", description: "", variants_raw: "", addons_raw: "", is_available: true };
+  // Form state — variants/addons are structured arrays now, no raw JSON
+  const blankForm = { name: "", category: "burgers", price: "", img_url: "", description: "", variants: [], addons: [], is_available: true };
   const [form, setForm] = useState(blankForm);
   const [saving, setSaving]       = useState(false);
   const [formErr, setFormErr]     = useState("");
@@ -1449,12 +1599,17 @@ function MenuTab() {
 
   const openAdd = () => { setForm(blankForm); setEditing(null); setFormErr(""); setShowForm(true); };
   const openEdit = (item) => {
+    // Parse existing variants/addons into structured arrays; fall back gracefully
+    let variants = [];
+    let addons   = [];
+    try { if (item.variants?.length) variants = item.variants.map(v => ({ label: v.label || "", price: String(v.price ?? "") })); } catch {}
+    try { if (item.addons?.length)   addons   = item.addons; } catch {}
     setForm({
       name: item.name, category: item.category, price: String(item.price),
       img_url: item.img || item.img_url || "",
       description: item.description || "",
-      variants_raw: item.variants ? JSON.stringify(item.variants) : "",
-      addons_raw: item.addons?.length ? JSON.stringify(item.addons) : "",
+      variants,
+      addons,
       is_available: item.is_available !== false,
     });
     setEditing(item.id); setFormErr(""); setShowForm(true);
@@ -1464,10 +1619,11 @@ function MenuTab() {
     if (!form.name.trim())          { setFormErr("Name is required."); return; }
     if (!form.price || isNaN(Number(form.price))) { setFormErr("Valid price required."); return; }
 
-    let variants = null;
-    let addons   = [];
-    try { if (form.variants_raw.trim()) variants = JSON.parse(form.variants_raw); } catch { setFormErr("Variants JSON is invalid."); return; }
-    try { if (form.addons_raw.trim())   addons   = JSON.parse(form.addons_raw);   } catch { setFormErr("Addons JSON is invalid."); return; }
+    // Build variants array from builder rows; skip empty rows
+    const variants = form.variants.length
+      ? form.variants.filter(v => v.label.trim()).map(v => ({ label: v.label.trim(), price: Number(v.price) || 0 }))
+      : null;
+    const addons = form.addons || [];
 
     setSaving(true);
     const payload = {
@@ -1670,23 +1826,29 @@ function MenuTab() {
               </div>
               {/* Variants */}
               <div>
-                <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Variants JSON <span className="normal-case font-normal">(optional — for Half/Full or Reg/Large)</span></label>
-                <textarea value={form.variants_raw} onChange={e => setForm(f => ({ ...f, variants_raw: e.target.value }))}
-                  placeholder={'[{"label":"Half","price":139},{"label":"Full","price":269}]'}
-                  className="w-full text-xs font-mono border-2 border-stone-200 focus:border-orange-400 rounded-xl px-4 py-3 outline-none text-stone-700 resize-none h-20" />
-                <p className="text-[10px] text-stone-400 mt-1">Leave empty if no size options.</p>
+                <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-2">
+                  Size Variants <span className="normal-case font-normal text-stone-300">(optional — Half/Full, Reg/Large, etc.)</span>
+                </label>
+                <VariantBuilder
+                  variants={form.variants}
+                  onChange={v => setForm(f => ({ ...f, variants: v }))}
+                />
+                {form.variants.length > 0 && (
+                  <p className="text-[10px] text-stone-400 mt-1.5">
+                    The base price above is the default. Each size overrides it when selected.
+                  </p>
+                )}
               </div>
+
               {/* Addons */}
               <div>
-                <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Add-ons JSON <span className="normal-case font-normal">(optional)</span></label>
-                <textarea value={form.addons_raw} onChange={e => setForm(f => ({ ...f, addons_raw: e.target.value }))}
-                  placeholder={'[\n  {"id":"cheese","label":"Extra Cheese","type":"toggle","price":20},\n  {"id":"spice","label":"Spice Level","type":"select","options":["Mild","Medium","Extra Hot"],"price":0}\n]'}
-                  className="w-full text-xs font-mono border-2 border-stone-200 focus:border-orange-400 rounded-xl px-4 py-3 outline-none text-stone-700 resize-none h-32" />
-                <div className="mt-1 bg-orange-50 border border-orange-100 rounded-xl p-3 text-[10px] text-stone-500 space-y-1">
-                  <p className="font-bold text-orange-700">Add-on types:</p>
-                  <p><code className="bg-white px-1 rounded">toggle</code> — checkbox (e.g. Extra Cheese +₹20)</p>
-                  <p><code className="bg-white px-1 rounded">select</code> with <code className="bg-white px-1 rounded">id:"spice"</code> — shows Mild/Medium/Extra Hot radio buttons</p>
-                </div>
+                <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-2">
+                  Add-ons / Customisations <span className="normal-case font-normal text-stone-300">(optional)</span>
+                </label>
+                <AddonBuilder
+                  addons={form.addons}
+                  onChange={a => setForm(f => ({ ...f, addons: a }))}
+                />
               </div>
               {/* Availability */}
               <div className="flex items-center justify-between bg-stone-50 rounded-xl px-4 py-3">
@@ -2859,17 +3021,49 @@ export default function AdminApp() {
   useEffect(() => {
     if (!authed || !SUPABASE_READY) return;
     fetchOrders();
+
+    let fallbackTimer = null;
+    const clearFallback = () => { if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; } };
+    const startFallback = () => {
+      if (fallbackTimer) return; // already running
+      setOnline(false);
+      fallbackTimer = setInterval(() => {
+        fetchOrders();
+        // Try to reconnect — if fetchOrders succeeds it'll setOnline(true)
+      }, 10000);
+    };
+
     const ch = supabase.channel("admin_orders")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, p => {
         if (p.eventType === "INSERT") setOrders(prev => [normalise(p.new), ...prev]);
         else if (p.eventType === "UPDATE") setOrders(prev => prev.map(o => o.id === p.new.id ? normalise(p.new) : o));
-      }).subscribe();
-    return () => supabase.removeChannel(ch);
+        else if (p.eventType === "DELETE") setOrders(prev => prev.filter(o => o.id !== p.old?.id));
+      })
+      .subscribe((state) => {
+        if (state === "SUBSCRIBED") {
+          setOnline(true);
+          clearFallback();
+        } else if (state === "CHANNEL_ERROR" || state === "TIMED_OUT" || state === "CLOSED") {
+          startFallback();
+        }
+      });
+
+    return () => { clearFallback(); supabase.removeChannel(ch); };
   }, [authed, fetchOrders]);
 
   const updateStatus = async (id, status, extra = {}) => {
+    // Save snapshot for rollback
+    const snapshot = orders.find(o => o.id === id);
+    // Optimistic update
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status, ...extra } : o));
-    if (SUPABASE_READY) await supabase.from("orders").update({ status, ...extra }).eq("id", id);
+    if (!SUPABASE_READY) return;
+    const { error } = await supabase.from("orders").update({ status, ...extra }).eq("id", id);
+    if (error) {
+      // Roll back the optimistic update and alert the user
+      if (snapshot) setOrders(prev => prev.map(o => o.id === id ? snapshot : o));
+      toast.error("⚠️ Status update failed — check connection and tap Refresh.");
+      console.error("updateStatus error:", error);
+    }
   };
 
   const handleCancel = async (id, reasonId) => {
