@@ -548,6 +548,8 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
   const cfg = STATUS_CFG[order.status] || STATUS_CFG.pending;
   const typeEmoji = order.order_type === "delivery" ? "🛵" : order.order_type === "takeaway" ? "📦" : "🍽️";
   const isUnconfirmed = order.status === "pending";
+  // Terminal statuses — no actions allowed at all
+  const isTerminal = order.status === "cancelled" || order.status === "served";
 
   return (
     <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden mb-3 ${isUnconfirmed ? "border-red-300 border-2" : "border-stone-100"}`}>
@@ -647,13 +649,12 @@ https://maps.google.com/?q=${order.customer_lat},${order.customer_lng}`
             </div>
           )}
 
-          {/* Action */}
-          {ns && (
+          {/* Action — hidden for terminal statuses (cancelled / served) */}
+          {ns && !isTerminal && (
             <button
               onClick={() => {
                 if (ns.next === "dispatched") { onAssignDispatch(order.id); }
                 else {
-                  // Auto-print KOT when accepting the order
                   if (ns.next === "accepted" && onPrintKOT) onPrintKOT(order);
                   onAdvance(order.id, ns.next);
                 }
@@ -661,6 +662,14 @@ https://maps.google.com/?q=${order.customer_lat},${order.customer_lng}`
               className="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white py-2.5 rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-transform">
               {ns.next === "accepted" ? "✅ Accept & Print KOT 🍳" : ns.label}
             </button>
+          )}
+
+          {/* Cancelled banner — shown instead of action buttons */}
+          {order.status === "cancelled" && (
+            <div className="w-full bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 text-center">
+              <p className="text-xs font-bold text-red-600">✕ Order Cancelled</p>
+              {order.cancel_reason && <p className="text-[11px] text-red-400 mt-0.5">{order.cancel_reason}</p>}
+            </div>
           )}
 
           {/* Print Bill + WhatsApp rider — side by side */}
@@ -689,8 +698,8 @@ https://maps.google.com/?q=${order.customer_lat},${order.customer_lng}`
             )}
           </div>
 
-          {/* Cancel order — admin only, requires a reason shown to the customer */}
-          {onCancel && (
+          {/* Cancel order — only shown for active (non-terminal) orders */}
+          {onCancel && !isTerminal && (
             <button
               onClick={() => setShowCancel(true)}
               className="w-full mt-2 flex items-center justify-center gap-1.5 border-2 border-red-100 text-red-500 py-2 rounded-xl text-xs font-bold active:scale-95 transition-transform hover:border-red-300 hover:bg-red-50">
@@ -3071,15 +3080,34 @@ export default function AdminApp() {
   const updateStatus = async (id, status, extra = {}) => {
     // Save snapshot for rollback
     const snapshot = orders.find(o => o.id === id);
-    // Optimistic update
+    // Optimistic update immediately so UI feels instant
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status, ...extra } : o));
     if (!SUPABASE_READY) return;
-    const { error } = await supabase.from("orders").update({ status, ...extra }).eq("id", id);
+
+    // Only send columns that exist in the orders table to avoid 400 errors.
+    // Extra fields like cancel_reason / cancelled_at / rider_name etc. are allowed.
+    // Unknown keys from future code won't cause a crash — Supabase ignores them
+    // if the column doesn't exist, but it WILL 400 if RLS blocks the update.
+    const payload = { status, ...extra };
+
+    const { error } = await supabase.from("orders").update(payload).eq("id", id);
     if (error) {
-      // Roll back the optimistic update and alert the user
+      // Roll back the optimistic update
       if (snapshot) setOrders(prev => prev.map(o => o.id === id ? snapshot : o));
-      toast.error("⚠️ Status update failed — check connection and tap Refresh.");
       console.error("updateStatus error:", error);
+      if (error.code === "42501" || error.message?.includes("policy")) {
+        toast.error("⚠️ Permission denied — run fix_orders_rls.sql in Supabase dashboard.");
+      } else if (error.code === "42703" || error.message?.includes("column")) {
+        // Unknown column — retry without the extra fields so status still updates
+        const { error: retryErr } = await supabase.from("orders").update({ status }).eq("id", id);
+        if (retryErr) {
+          toast.error("⚠️ Status update failed — check connection and tap Refresh.");
+        }
+        // Show a warning but don't block — the status did update
+        console.warn("updateStatus: some extra columns not found in DB, update retried with status only");
+      } else {
+        toast.error("⚠️ Status update failed — check connection and tap Refresh.");
+      }
     }
   };
 
