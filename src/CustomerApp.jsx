@@ -2517,7 +2517,12 @@ export function ReservationPage() {
     if (!time)                   { setErr("Please select a time."); return; }
     setSaving(true);
     if (SUPABASE_READY) {
-      await supabase.from("reservations").insert({ name: name.trim(), phone, date, time, guests, note: note.trim(), status: "pending" });
+      const { error } = await supabase.from("reservations").insert({ name: name.trim(), phone, date, time, guests, note: note.trim(), status: "pending" });
+      if (error) {
+        setSaving(false);
+        setErr("Couldn't save reservation — " + error.message + ". Please call us directly.");
+        return;
+      }
     }
     setSaving(false);
     setDone(true);
