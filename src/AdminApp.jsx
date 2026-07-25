@@ -930,7 +930,12 @@ function BillingTab({ bizSettings }) {
     // 1 — Save to Supabase
     if (SUPABASE_READY) {
       const { error } = await supabase.from("orders").insert(payload);
-      if (error) console.error("Billing insert error:", error);
+      if (error) {
+        setPrintErr("⚠️ Order not saved — " + error.message + ". Print anyway?");
+        setPlacing(false);
+        // Don't clear cart or proceed — admin must retry or acknowledge
+        return;
+      }
     }
 
     // 2 — Print invoice via Windows print dialog
@@ -978,7 +983,11 @@ function BillingTab({ bizSettings }) {
     const payload = buildOrderPayload();
     if (SUPABASE_READY) {
       const { error } = await supabase.from("orders").insert(payload);
-      if (error) console.error("Billing insert error:", error);
+      if (error) {
+        setPrintErr("⚠️ Order not saved — " + error.message);
+        setPlacing(false);
+        return;
+      }
     }
     try {
       printInvoice(payload, bizSettings);
@@ -1642,32 +1651,44 @@ function MenuTab() {
     };
 
     if (editing) {
-      await supabase.from("menu_items").update(payload).eq("id", editing);
+      const { error } = await supabase.from("menu_items").update(payload).eq("id", editing);
+      setSaving(false);
+      if (error) { toast.error("⚠️ Save failed — " + error.message); return; }
     } else {
-      await supabase.from("menu_items").insert({ ...payload, id: `custom_${Date.now()}` });
+      const { error } = await supabase.from("menu_items").insert({ ...payload, id: `custom_${Date.now()}` });
+      setSaving(false);
+      if (error) { toast.error("⚠️ Add failed — " + error.message); return; }
     }
-    setSaving(false); setShowForm(false); loadItems();
+    setShowForm(false); loadItems();
   };
 
   const [pendingDelete, setPendingDelete] = useState(null);
   const deleteItem = async (id) => {
     if (pendingDelete !== id) { setPendingDelete(id); setTimeout(() => setPendingDelete(null), 3000); return; }
     setPendingDelete(null);
-    await supabase.from("menu_items").delete().eq("id", id);
+    const { error } = await supabase.from("menu_items").delete().eq("id", id);
+    if (error) { toast.error("⚠️ Delete failed — " + error.message); return; }
     loadItems();
   };
 
   const toggleAvail = async (id, current) => {
-    await supabase.from("menu_items").update({ is_available: !current }).eq("id", id);
     setItems(prev => prev.map(i => i.id === id ? { ...i, is_available: !current } : i));
+    const { error } = await supabase.from("menu_items").update({ is_available: !current }).eq("id", id);
+    if (error) {
+      setItems(prev => prev.map(i => i.id === id ? { ...i, is_available: current } : i));
+      toast.error("⚠️ Couldn't update availability — " + error.message);
+    }
   };
 
   const toggleBestseller = async (id, current) => {
-    // null = auto (not pinned), true = pinned as bestseller, false = pinned as NOT bestseller
     const next = current ? null : true;
-    await supabase.from("menu_items").update({ is_bestseller_manual: next }).eq("id", id);
     setItems(prev => prev.map(i => i.id === id ? { ...i, is_bestseller_manual: next } : i));
-    // Bust customer-side cache
+    const { error } = await supabase.from("menu_items").update({ is_bestseller_manual: next }).eq("id", id);
+    if (error) {
+      setItems(prev => prev.map(i => i.id === id ? { ...i, is_bestseller_manual: current } : i));
+      toast.error("⚠️ Couldn't update bestseller — " + error.message);
+      return;
+    }
     localStorage.removeItem("bp_bestsellers");
   };
 
@@ -2279,7 +2300,13 @@ function CategoriesSection() {
 
   const toggle = async (id, current) => {
     setCats(prev => prev.map(c => c.id === id ? { ...c, enabled: !current } : c));
-    if (SUPABASE_READY) await supabase.from("categories").update({ enabled: !current }).eq("id", id);
+    if (SUPABASE_READY) {
+      const { error } = await supabase.from("categories").update({ enabled: !current }).eq("id", id);
+      if (error) {
+        setCats(prev => prev.map(c => c.id === id ? { ...c, enabled: current } : c));
+        toast.error("⚠️ Couldn't update category — " + error.message);
+      }
+    }
   };
 
   if (loading) return <Section emoji="📂" title="Menu Categories"><p className="text-xs text-stone-400">Loading…</p></Section>;
@@ -2368,8 +2395,10 @@ function SettingsTab({ riders, setRiders, onLogout }) {
   const saveBusy = async () => {
     setBusySaving(true);
     const payload = { is_busy: busy.is_busy, message: busy.message, opens_at: busy.opens_at };
-    await supabase.from("busy_mode").upsert({ id: 1, ...payload });
+    const { error } = await supabase.from("busy_mode").upsert({ id: 1, ...payload });
     setBusySaving(false);
+    if (error) { toast.error("⚠️ Couldn't save kitchen status — " + error.message); return; }
+    toast.success("Kitchen status updated.");
   };
 
   const saveWaitTimes = () => {
@@ -2400,13 +2429,22 @@ function SettingsTab({ riders, setRiders, onLogout }) {
   };
 
   const toggleCoupon = async (id, current) => {
-    await supabase.from("coupons").update({ is_active: !current }).eq("id", id);
     setCoupons(prev => prev.map(c => c.id === id ? { ...c, is_active: !current } : c));
+    const { error } = await supabase.from("coupons").update({ is_active: !current }).eq("id", id);
+    if (error) {
+      setCoupons(prev => prev.map(c => c.id === id ? { ...c, is_active: current } : c));
+      toast.error("⚠️ Couldn't toggle coupon — " + error.message);
+    }
   };
 
   const updateReservation = async (id, status) => {
-    await supabase.from("reservations").update({ status }).eq("id", id);
+    const snapshot = reservations.find(r => r.id === id);
     setReservations(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+    const { error } = await supabase.from("reservations").update({ status }).eq("id", id);
+    if (error) {
+      if (snapshot) setReservations(prev => prev.map(r => r.id === id ? snapshot : r));
+      toast.error("⚠️ Couldn't update reservation — " + error.message);
+    }
   };
 
   return (
@@ -2638,7 +2676,9 @@ function RidersTab() {
     if (!editRider && !form.password) { setFormErr("Password required."); return; }
     setSaving(true); setFormErr("");
     if (editRider) {
-      await supabase.from("riders").update({ full_name: form.full_name.trim(), phone_number: form.phone_number, updated_at: new Date().toISOString() }).eq("rider_id", editRider.rider_id);
+      const { error } = await supabase.from("riders").update({ full_name: form.full_name.trim(), phone_number: form.phone_number, updated_at: new Date().toISOString() }).eq("rider_id", editRider.rider_id);
+      setSaving(false);
+      if (error) { setFormErr("Save failed — " + error.message); return; }
     } else {
       const { data } = await supabase.rpc("create_rider_with_password", { p_rider_id: form.rider_id.trim().toUpperCase(), p_full_name: form.full_name.trim(), p_phone: form.phone_number, p_password: form.password });
       if (!data?.success) { setFormErr(data?.error || "Failed."); setSaving(false); return; }
@@ -2647,13 +2687,21 @@ function RidersTab() {
   };
 
   const toggleActive = async (r) => {
-    await supabase.from("riders").update({ active: !r.active, updated_at: new Date().toISOString() }).eq("rider_id", r.rider_id);
-    setRiders(prev => prev.map(x => x.rider_id === r.rider_id ? { ...x, active: !x.active } : x));
+    setRiders(prev => prev.map(x => x.rider_id === r.rider_id ? { ...x, active: !r.active } : x));
+    const { error } = await supabase.from("riders").update({ active: !r.active, updated_at: new Date().toISOString() }).eq("rider_id", r.rider_id);
+    if (error) {
+      setRiders(prev => prev.map(x => x.rider_id === r.rider_id ? { ...x, active: r.active } : x));
+      toast.error("⚠️ Couldn't update rider — " + error.message);
+    }
   };
 
   const changeAvail = async (r, avail) => {
-    await supabase.from("riders").update({ availability: avail, updated_at: new Date().toISOString() }).eq("rider_id", r.rider_id);
     setRiders(prev => prev.map(x => x.rider_id === r.rider_id ? { ...x, availability: avail } : x));
+    const { error } = await supabase.from("riders").update({ availability: avail, updated_at: new Date().toISOString() }).eq("rider_id", r.rider_id);
+    if (error) {
+      setRiders(prev => prev.map(x => x.rider_id === r.rider_id ? { ...x, availability: r.availability } : x));
+      toast.error("⚠️ Couldn't update availability — " + error.message);
+    }
   };
 
   const [pendingRiderDelete, setPendingRiderDelete] = useState(null);
@@ -2664,15 +2712,19 @@ function RidersTab() {
       return;
     }
     setPendingRiderDelete(null);
-    await supabase.from("riders").delete().eq("rider_id", r.rider_id);
+    const { error } = await supabase.from("riders").delete().eq("rider_id", r.rider_id);
+    if (error) { toast.error("⚠️ Delete failed — " + error.message); return; }
     load();
   };
 
   const resetPwd = async () => {
     if (!newPwd || newPwd.length < 6) return;
     setResetting(true);
-    await supabase.rpc("reset_rider_password", { p_rider_id: resetId, p_new_password: newPwd });
-    setResetting(false); setResetId(null); setNewPwd("");
+    const { error } = await supabase.rpc("reset_rider_password", { p_rider_id: resetId, p_new_password: newPwd });
+    setResetting(false);
+    if (error) { toast.error("⚠️ Password reset failed — " + error.message); return; }
+    toast.success("Password reset successfully.");
+    setResetId(null); setNewPwd("");
   };
 
   const AVAIL = { Available: "bg-green-100 text-green-700", Busy: "bg-orange-100 text-orange-700", Offline: "bg-stone-100 text-stone-500" };
@@ -3077,9 +3129,16 @@ export default function AdminApp() {
     return () => { clearFallback(); supabase.removeChannel(ch); };
   }, [authed, fetchOrders]);
 
+  const TERMINAL_STATUSES = new Set(["cancelled", "served"]);
+
   const updateStatus = async (id, status, extra = {}) => {
-    // Save snapshot for rollback
+    // Guard: never push a terminal order forward
     const snapshot = orders.find(o => o.id === id);
+    if (snapshot && TERMINAL_STATUSES.has(snapshot.status)) {
+      toast.error("This order is already " + snapshot.status + " — no further changes allowed.");
+      return;
+    }
+
     // Optimistic update immediately so UI feels instant
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status, ...extra } : o));
     if (!SUPABASE_READY) return;
@@ -3181,7 +3240,8 @@ export default function AdminApp() {
       ...(routeData || {}),
     });
     // Mark rider as Busy
-    await supabase.from("riders").update({ availability: "Busy", updated_at: new Date().toISOString() }).eq("rider_id", rider.rider_id);
+    const { error: riderErr } = await supabase.from("riders").update({ availability: "Busy", updated_at: new Date().toISOString() }).eq("rider_id", rider.rider_id);
+    if (riderErr) console.warn("Rider availability update failed:", riderErr.message);
     setAssignModal(null);
   };
 
