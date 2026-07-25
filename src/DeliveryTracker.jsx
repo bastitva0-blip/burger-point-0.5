@@ -111,3 +111,294 @@ function useEtaCountdown(deliveryStartedAt, etaMinutes) {
 // ── Progress along route (0→1) ────────────────────────────
 function useRouteProgress(deliveryStartedAt, etaMinutes, isDelivered) {
   const [progress, setProgress] = useState(0);
+  const rafRef = useRef(null);
+  const etaMs = (etaMinutes || 30) * 60 * 1000;
+
+  useEffect(() => {
+    if (isDelivered) { setProgress(1); return; }
+    if (!deliveryStartedAt) return;
+
+    const started = new Date(deliveryStartedAt).getTime();
+
+    const tick = () => {
+      const elapsed = Date.now() - started;
+      const p = Math.min(elapsed / etaMs, 0.96);
+      setProgress(p);
+      if (p < 0.96) rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [deliveryStartedAt, etaMs, isDelivered]);
+
+  return progress;
+}
+
+// ── Status message ────────────────────────────────────────
+function getStatusMessage(progress, isDelivered, hasRider, orderStatus) {
+  if (isDelivered) return { title: "Delivered! 🎉", sub: "Enjoy your meal ❤️" };
+  if (!hasRider) {
+    if (orderStatus === "ready") return { title: "Packed & ready 📦", sub: "Waiting for a rider to be assigned." };
+    return { title: "Preparing your order 👨‍🍳", sub: "We'll show the live map once a rider is on the way." };
+  }
+  if (progress > 0.85) return { title: "Almost there! 🏁", sub: "Please keep your phone nearby." };
+  if (progress > 0.5)  return { title: "On the way! 🛵", sub: "Your rider has left the restaurant." };
+  return { title: "Your order is on the way 🍔", sub: "Your rider has picked up your order." };
+}
+
+// ── Map Panel ─────────────────────────────────────────────
+function MapPanel({ center, mapBounds, restCoords, custCoords, hasRider, routeCoords, progress, mapExpanded, onToggleMap }) {
+  return (
+    <div
+      className="relative flex-shrink-0 bg-stone-800"
+      style={{
+        height: mapExpanded ? "70vh" : "30vh",
+        transition: "height 0.35s cubic-bezier(0.4,0,0.2,1)",
+      }}
+    >
+      <MapContainer
+        center={center}
+        zoom={14}
+        className="w-full h-full"
+        zoomControl={false}
+        attributionControl={false}
+      >
+        <TileLayer
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='© OpenStreetMap contributors'
+        />
+        {mapBounds && <MapFitter bounds={mapBounds} />}
+        <Marker position={restCoords} icon={restaurantIcon} />
+        {custCoords && <Marker position={custCoords} icon={customerIcon} />}
+        {hasRider && routeCoords && routeCoords.length > 1 && (
+          <Polyline positions={routeCoords} pathOptions={{ color: "#f97316", weight: 5, opacity: 0.85 }} />
+        )}
+        {hasRider && routeCoords && (
+          <BikeMarker coords={routeCoords} progress={progress} />
+        )}
+        {hasRider && !routeCoords && custCoords && (
+          <Polyline positions={[restCoords, custCoords]} pathOptions={{ color: "#f97316", weight: 4, opacity: 0.6, dashArray: "8 6" }} />
+        )}
+      </MapContainer>
+
+      {/* Expand / Minimize button */}
+      <button
+        onClick={onToggleMap}
+        className="absolute top-3 right-3 z-[1001] bg-white rounded-xl shadow-lg px-3 py-2 flex items-center gap-1.5 active:scale-95 transition-transform"
+        style={{ backdropFilter: "blur(4px)" }}
+      >
+        {mapExpanded
+          ? <><Minimize2 size={14} className="text-stone-600" /><span className="text-[11px] font-bold text-stone-600">Minimize</span></>
+          : <><Maximize2 size={14} className="text-orange-500" /><span className="text-[11px] font-bold text-orange-500">Expand</span></>
+        }
+      </button>
+
+      <div className="absolute bottom-2 right-2 z-[1000] bg-white/80 text-[9px] text-stone-500 px-1.5 py-0.5 rounded">
+        © OpenStreetMap
+      </div>
+    </div>
+  );
+}
+
+// ── Details Panel ─────────────────────────────────────────
+function DetailsPanel({ order, riderName, riderPhone, etaMin, isDelivered, hasRider, pct, msg, onNewOrder }) {
+  const steps = [
+    { label: "Order Confirmed", done: true,        icon: "✓" },
+    { label: "Preparing",       done: true,        icon: "✓" },
+    { label: "Packed",          done: true,        icon: "✓" },
+    { label: "Rider Assigned",  done: hasRider,    icon: hasRider ? "🛵" : "" },
+    { label: "Delivered",       done: isDelivered, icon: isDelivered ? "✓" : "" },
+  ];
+
+  return (
+    <div className="flex-1 bg-white overflow-y-auto" style={{ minHeight: 0 }}>
+      {/* Status header */}
+      <div className="bg-gradient-to-r from-orange-500 to-red-600 px-5 pt-5 pb-4">
+        <style>{`@keyframes dtFadeIn{from{opacity:0}to{opacity:1}}`}</style>
+        <p key={msg.title} className="font-black text-white text-xl leading-tight" style={{ animation: "dtFadeIn 0.3s ease-out" }}>
+          {msg.title}
+        </p>
+        <p key={msg.sub} className="text-orange-100 text-xs mt-0.5" style={{ animation: "dtFadeIn 0.3s ease-out 0.05s backwards" }}>
+          {msg.sub}
+        </p>
+        {hasRider && (
+          <div className="mt-3 flex items-center gap-3">
+            <div className="bg-white/20 rounded-xl px-3 py-1.5 flex items-center gap-1.5 flex-shrink-0">
+              <Clock size={13} className="text-orange-200" />
+              <span className="font-black text-lg text-white">
+                {isDelivered ? "Done" : etaMin != null ? `${etaMin} min` : "–"}
+              </span>
+            </div>
+            <div className="flex-1">
+              <div className="flex justify-between text-[10px] text-orange-200 mb-1">
+                <span>Restaurant</span><span>Your Door</span>
+              </div>
+              <div className="h-2 bg-white/20 rounded-full overflow-hidden">
+                <div className="h-full bg-white rounded-full" style={{ width: `${pct}%`, transition: "width 1s ease-out" }} />
+              </div>
+            </div>
+          </div>
+        )}
+        {!hasRider && (
+          <div className="mt-3 bg-white/15 rounded-xl px-3 py-2 flex items-center gap-2">
+            <span className="text-xs text-orange-100">🔎 Looking for a nearby rider…</span>
+          </div>
+        )}
+      </div>
+
+      <div className="px-5 py-4 space-y-4">
+        {/* Rider info */}
+        <div className="flex items-center gap-3 bg-stone-50 rounded-2xl p-3">
+          <div className="w-10 h-10 bg-orange-100 rounded-2xl flex items-center justify-center text-xl flex-shrink-0">
+            {hasRider ? "🛵" : "👨‍🍳"}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-black text-stone-800 text-sm truncate">
+              {hasRider ? (riderName || "Your Rider") : "Preparing your order"}
+            </p>
+            <p className="text-xs text-stone-400">
+              {isDelivered ? "✅ Delivered!" : !hasRider ? "Rider not assigned yet" : etaMin != null ? `~${etaMin} min away` : "On the way"}
+            </p>
+          </div>
+          {hasRider && riderPhone && (
+            <a href={`tel:${riderPhone}`}
+              className="w-10 h-10 bg-green-500 rounded-2xl flex items-center justify-center shadow-sm active:scale-95 transition-transform flex-shrink-0">
+              <Phone size={16} className="text-white" />
+            </a>
+          )}
+        </div>
+
+        {/* Delivery steps */}
+        <div>
+          <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-3">Delivery Progress</p>
+          <div className="grid grid-cols-5 gap-1">
+            {steps.map((s, i) => (
+              <div key={i} className="flex flex-col items-center gap-1">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${s.done ? "bg-orange-500 text-white shadow-md" : "bg-stone-100 text-stone-300"}`}>
+                  {s.done ? s.icon || "✓" : (i + 1)}
+                </div>
+                <p className={`text-[9px] font-bold text-center leading-tight ${s.done ? "text-stone-700" : "text-stone-300"}`}>{s.label}</p>
+                {i === 3 && s.done && !isDelivered && (
+                  <span className="text-[8px] bg-orange-100 text-orange-600 font-bold px-1 py-0.5 rounded-full animate-pulse">LIVE</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Order items */}
+        <div className="bg-stone-50 rounded-2xl p-4">
+          <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-3">Your Order</p>
+          {order.items?.map((it, i) => (
+            <div key={i} className="flex justify-between text-sm py-1.5 border-b border-stone-100 last:border-0">
+              <span className="text-stone-700 flex-1 text-xs">
+                {it.name}{it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×{it.qty}
+              </span>
+              <span className="text-stone-600 font-bold ml-3 text-xs">₹{it.finalPrice * it.qty}</span>
+            </div>
+          ))}
+          <div className="flex justify-between font-black text-sm pt-2 mt-1">
+            <span>Total</span>
+            <span className="text-orange-600">₹{order.total}</span>
+          </div>
+        </div>
+
+        {/* Order meta */}
+        <div className="space-y-2">
+          {order.delivery_address && (
+            <div className="flex items-start gap-2 bg-blue-50 rounded-xl p-3">
+              <MapPin size={14} className="text-blue-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-stone-700">{order.delivery_address}</p>
+            </div>
+          )}
+          {order.payment_method && (
+            <div className="flex items-center gap-2 bg-green-50 rounded-xl p-3">
+              <span className="text-xs text-stone-500">💳 Paid via</span>
+              <span className="text-xs font-bold text-stone-700">{order.payment_method}</span>
+            </div>
+          )}
+          {order.note && (
+            <div className="bg-yellow-50 rounded-xl p-3">
+              <p className="text-xs text-stone-500 italic">📝 "{order.note}"</p>
+            </div>
+          )}
+        </div>
+
+        {/* Delivered CTA */}
+        {isDelivered && (
+          <div className="pt-2 pb-4" style={{ animation: "dtSlideUp 0.3s ease-out" }}>
+            <style>{`@keyframes dtSlideUp{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
+            <p className="text-center text-3xl mb-2">🎉</p>
+            <p className="text-center font-black text-stone-800 text-xl mb-1">Delivered!</p>
+            <p className="text-center text-stone-500 text-sm mb-4">Enjoy your meal ❤️</p>
+            <button onClick={onNewOrder}
+              className="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform">
+              🛒 Order Again
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main DeliveryTracker ──────────────────────────────────
+export default function DeliveryTracker({ order, riderName, riderPhone, restaurantCoords, onNewOrder }) {
+  const isDelivered = order.status === "served";
+  const hasRider    = Boolean(riderName);
+  const [mapExpanded, setMapExpanded] = useState(false);
+
+  const routeCoords = useMemo(() => order.route_geometry || null, [order.route_geometry]);
+  const etaMin      = useEtaCountdown(order.delivery_started_at, order.route_eta_minutes);
+  const progress    = useRouteProgress(order.delivery_started_at, order.route_eta_minutes, isDelivered);
+  const msg         = getStatusMessage(progress, isDelivered, hasRider, order.status);
+
+  const restCoords = restaurantCoords || [26.926287, 80.942995];
+  const custCoords = (order.customer_lat && order.customer_lng)
+    ? [order.customer_lat, order.customer_lng] : null;
+
+  const mapBounds = useMemo(() => {
+    const pts = [restCoords];
+    if (custCoords) pts.push(custCoords);
+    if (hasRider && routeCoords) pts.push(...routeCoords);
+    return pts.length > 1 ? L.latLngBounds(pts) : null;
+  }, [restCoords, custCoords, routeCoords, hasRider]);
+
+  const center = custCoords
+    ? [(restCoords[0] + custCoords[0]) / 2, (restCoords[1] + custCoords[1]) / 2]
+    : restCoords;
+
+  const pct = Math.round(progress * 100);
+
+  return (
+    <div className="fixed inset-0 bg-white flex flex-col" style={{ zIndex: 9999 }}>
+      {/* Map — 30vh normally, 70vh when expanded */}
+      <MapPanel
+        center={center}
+        mapBounds={mapBounds}
+        restCoords={restCoords}
+        custCoords={custCoords}
+        hasRider={hasRider}
+        routeCoords={routeCoords}
+        progress={progress}
+        mapExpanded={mapExpanded}
+        onToggleMap={() => setMapExpanded(e => !e)}
+      />
+
+      {/* Details — visible normally, hidden when map is expanded */}
+      {!mapExpanded && (
+        <DetailsPanel
+          order={order}
+          riderName={riderName}
+          riderPhone={riderPhone}
+          etaMin={etaMin}
+          isDelivered={isDelivered}
+          hasRider={hasRider}
+          pct={pct}
+          msg={msg}
+          onNewOrder={onNewOrder}
+        />
+      )}
+    </div>
+  );
+}
