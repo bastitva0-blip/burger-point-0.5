@@ -574,26 +574,55 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
   const [reviewDone,  setReviewDone]  = useState(false);
   const [thumbSent,   setThumbSent]   = useState(null);
   // Feature 1: stale banner
-  const [isStale,     setIsStale]     = useState(false);
+  // Fix 1: stale banner; Fix 5: pending stuck; Fix 15: delivery stuck
+  const [isStale,          setIsStale]          = useState(false);
+  const [isPendingStuck,   setIsPendingStuck]   = useState(false);
   // Feature 3: offline banner
   const [isOffline,   setIsOffline]   = useState(!navigator.onLine);
   // Feature 4: live ETA countdown
   const [etaText,     setEtaText]     = useState(null);
-  const [waitTimes]                   = useState(() => {
+  const [waitTimes, setWaitTimes] = useState(() => {
     try { return JSON.parse(localStorage.getItem(SS_WAIT) || "{}"); } catch { return {}; }
   });
 
-  // Feature 1: stale banner — check every 30s if accepted for >25 min
+  // Fix 14: subscribe to live wait-time changes from business_settings
   useEffect(() => {
-    if (status !== "accepted") { setIsStale(false); return; }
+    if (!SUPABASE_READY) return;
+    const ch = supabase.channel("biz-settings-wait")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "business_settings" }, (p) => {
+        const d = p.new;
+        const updated = {
+          "dine-in":  d.wait_dine  || 15,
+          takeaway:   d.wait_takeaway || 20,
+          delivery:   d.wait_delivery || 40,
+        };
+        setWaitTimes(updated);
+        localStorage.setItem(SS_WAIT, JSON.stringify(updated));
+      })
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, []);
+
+  // Fix 5 + Fix 15: stale-check covers pending >10 min AND accepted >25 min AND delivery accepted >30 min without rider
+  const [isDeliveryStuck, setIsDeliveryStuck] = useState(false);
+
+  useEffect(() => {
     const check = () => {
       const ageMs = Date.now() - new Date(order.created_at).getTime();
-      setIsStale(ageMs > 25 * 60 * 1000);
+      const ot = order.order_type || "dine-in";
+      if (status === "accepted") {
+        setIsStale(ageMs > 25 * 60 * 1000);
+        setIsDeliveryStuck(ot === "delivery" && !riderName && ageMs > 30 * 60 * 1000);
+      } else {
+        setIsStale(false);
+        setIsDeliveryStuck(false);
+      }
+      setIsPendingStuck(status === "pending" && ageMs > 10 * 60 * 1000);
     };
     check();
     const t = setInterval(check, 30000);
     return () => clearInterval(t);
-  }, [status, order.created_at]);
+  }, [status, order.created_at, order.order_type, riderName]);
 
   // Feature 3: offline banner
   useEffect(() => {
@@ -629,6 +658,44 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
   }, [status, order.created_at, order.order_type, waitTimes]);
+
+  // Fix 13: confirmation sound + haptic when tracker first appears (order just placed)
+  useEffect(() => {
+    // Only fire the chime once, when the order is still brand-new (placed in the last 30s)
+    const age = Date.now() - new Date(order.created_at).getTime();
+    if (age > 30000) return; // resuming an old order — skip
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const playTone = (freq, start, duration) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = freq; osc.type = "sine";
+        gain.gain.setValueAtTime(0.25, ctx.currentTime + start);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
+        osc.start(ctx.currentTime + start);
+        osc.stop(ctx.currentTime + start + duration);
+      };
+      playTone(523, 0, 0.15);   // C5
+      playTone(659, 0.15, 0.15); // E5
+      playTone(784, 0.3, 0.25);  // G5
+    } catch {}
+    try { navigator.vibrate?.([80, 40, 80]); } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fix 7: live kitchen busy indicator
+  const [kitchenBusy, setKitchenBusy] = useState(null);
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    supabase.from("busy_mode").select("is_busy, message").eq("id", 1).single()
+      .then(({ data }) => { if (data?.is_busy) setKitchenBusy(data.message || "Kitchen is very busy right now"); });
+    const ch = supabase.channel("busy-mode-tracker")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "busy_mode", filter: "id=eq.1" }, (p) => {
+        setKitchenBusy(p.new.is_busy ? (p.new.message || "Kitchen is very busy right now") : null);
+      }).subscribe();
+    return () => supabase.removeChannel(ch);
+  }, []);
 
   // applyUpdateRef so offline handler can call applyUpdate without stale closure
   const applyUpdateRef = useRef(null);
@@ -740,10 +807,20 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
 
   const submitRating = async (rating) => {
     setThumbSent(rating);
-    setReviewDone(true);
     if (SUPABASE_READY && order.id) {
-      await supabase.from("reviews").insert({ order_id: order.id, rating });
+      const { error } = await supabase.from("reviews").insert({ order_id: order.id, rating });
+      if (error) {
+        // Fix 11: don't pretend the review was saved when it wasn't
+        console.error("Review save failed:", error);
+        setThumbSent(null);
+        setReviewDone(false);
+        // Show the done state anyway for UX, but note the failure
+        setThumbSent(rating + "_failed");
+        setReviewDone(true);
+        return;
+      }
     }
+    setReviewDone(true);
   };
 
   const steps  = getTrackerSteps(order.order_type || "dine-in");
@@ -771,6 +848,14 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           <div className="bg-white border border-red-200 rounded-2xl px-4 py-3 max-w-xs mb-6">
             <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest mb-1">Reason</p>
             <p className="text-sm text-stone-700">{reason}</p>
+          </div>
+        )}
+        {/* Fix 6: refund notice for online payments */}
+        {order.payment_method && order.payment_method.toLowerCase().includes("razorpay") && (
+          <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3 max-w-xs mb-4 text-left">
+            <p className="text-xs font-bold text-blue-700 mb-1">💳 About your payment</p>
+            <p className="text-xs text-blue-600">You paid online (₹{order.total}). Your refund will be processed within 5–7 business days to your original payment method.</p>
+            {order.razorpay_payment_id && <p className="text-[10px] font-mono text-blue-500 mt-1">Ref: {order.razorpay_payment_id}</p>}
           </div>
         )}
         <a href="tel:+919194008822" className="flex items-center gap-2 border border-orange-200 text-orange-600 font-bold text-sm px-5 py-3 rounded-2xl mb-3">
@@ -820,6 +905,24 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 to-amber-50 flex flex-col">
+      {/* Fix 15: delivery accepted >30 min with no rider assigned yet */}
+      {isDeliveryStuck && (
+        <div className="sticky top-0 z-20 bg-orange-500 text-white px-4 py-2.5 flex items-center justify-between gap-3">
+          <span className="text-xs font-bold flex-1">Still finding a rider — taking longer than usual 🙏</span>
+          <a href="tel:+919194008822" className="flex-shrink-0 bg-white/20 text-white text-xs font-black px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+            <Phone size={11} /> Call
+          </a>
+        </div>
+      )}
+      {/* Fix 5: pending >10 min escalation banner */}
+      {isPendingStuck && status === "pending" && (
+        <div className="sticky top-0 z-20 bg-red-500 text-white px-4 py-2.5 flex items-center justify-between gap-3">
+          <span className="text-xs font-bold flex-1">Taking longer than expected — restaurant may have missed this order 🙏</span>
+          <a href="tel:+919194008822" className="flex-shrink-0 bg-white/20 text-white text-xs font-black px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+            <Phone size={11} /> Call Now
+          </a>
+        </div>
+      )}
       {/* Feature 1: stale banner */}
       {isStale && status === "accepted" && (
         <div className="sticky top-0 z-20 bg-yellow-400 text-yellow-900 px-4 py-2.5 flex items-center justify-between gap-3">
@@ -827,6 +930,12 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           <a href="tel:+919194008822" className="flex-shrink-0 bg-yellow-900/20 text-yellow-900 text-xs font-black px-3 py-1.5 rounded-xl flex items-center gap-1.5">
             <Phone size={11} /> Call
           </a>
+        </div>
+      )}
+      {/* Fix 7: kitchen busy banner */}
+      {kitchenBusy && (status === "pending" || status === "accepted") && (
+        <div className="bg-amber-100 border-b border-amber-300 text-amber-900 text-xs font-medium px-4 py-2 text-center">
+          🍳 {kitchenBusy} — your order may take a bit longer than usual
         </div>
       )}
       {/* Feature 3: offline banner */}
@@ -898,13 +1007,26 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
               </>
             ) : (
               <div className="text-center">
-                <p className="text-2xl mb-1">{thumbSent === "up" ? "🎉" : "🙏"}</p>
-                <p className="text-sm font-bold text-stone-800">{thumbSent === "up" ? "Thanks! We're glad you loved it!" : "Thanks for the feedback. We'll improve!"}</p>
-                {thumbSent === "up" && (
-                  <a href={REVIEW_URL} target="_blank" rel="noreferrer"
-                    className="mt-2 inline-flex items-center gap-1 text-xs text-orange-600 font-semibold">
-                    <Star size={11} fill="currentColor" /> Share on Google too?
-                  </a>
+                {thumbSent.includes("_failed") ? (
+                  <>
+                    <p className="text-2xl mb-1">🙏</p>
+                    <p className="text-sm font-bold text-stone-800">Thanks! (Couldn't save — please leave a Google review instead)</p>
+                    <a href={REVIEW_URL} target="_blank" rel="noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 text-xs text-orange-600 font-semibold">
+                      <Star size={11} fill="currentColor" /> Review on Google
+                    </a>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-2xl mb-1">{thumbSent === "up" ? "🎉" : "🙏"}</p>
+                    <p className="text-sm font-bold text-stone-800">{thumbSent === "up" ? "Thanks! We're glad you loved it!" : "Thanks for the feedback. We'll improve!"}</p>
+                    {thumbSent === "up" && (
+                      <a href={REVIEW_URL} target="_blank" rel="noreferrer"
+                        className="mt-2 inline-flex items-center gap-1 text-xs text-orange-600 font-semibold">
+                        <Star size={11} fill="currentColor" /> Share on Google too?
+                      </a>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -973,11 +1095,21 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           {order.note && <p className="text-xs text-stone-400 italic mt-2">Note: "{order.note}"</p>}
         </div>
 
-        {/* Feature 6: WhatsApp order summary */}
-        <a href={waOrderSummary} target="_blank" rel="noreferrer"
+        {/* Feature 6 + Fix 12: WhatsApp order summary with clipboard fallback for desktop */}
+        <button
+          onClick={async () => {
+            const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+            if (isMobile) { window.open(waOrderSummary, "_blank", "noreferrer"); return; }
+            // Desktop: extract the text part and copy it
+            try {
+              const msg = decodeURIComponent(waOrderSummary.split("text=")[1] || "");
+              await navigator.clipboard.writeText(msg);
+              alert("Order summary copied! Open WhatsApp on your phone and paste it.");
+            } catch { window.open(waOrderSummary, "_blank", "noreferrer"); }
+          }}
           className="mt-3 w-full flex items-center justify-center gap-2 border border-green-200 text-green-700 font-bold text-sm py-3 rounded-2xl active:scale-95 transition-transform bg-green-50">
           📲 Send to WhatsApp
-        </a>
+        </button>
 
         <a href="tel:+919194008822" className="mt-3 w-full flex items-center justify-center gap-2 border border-orange-200 text-orange-600 font-bold text-sm py-3 rounded-2xl active:scale-95 transition-transform">
           <Phone size={15} /> Call Restaurant
@@ -998,7 +1130,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
 }
 
 // ── ORDER HISTORY MODAL ───────────────────────────────────
-function OrderHistoryModal({ onClose, onReorder }) {
+function OrderHistoryModal({ onClose, onReorder, onShareReceipt }) {
   const history = (() => { try { return JSON.parse(localStorage.getItem(LS_HISTORY) || "[]"); } catch { return []; } })();
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -1026,10 +1158,17 @@ function OrderHistoryModal({ onClose, onReorder }) {
                 ))}
                 {order.items?.length > 3 && <span className="text-stone-400"> +{order.items.length - 3} more</span>}
               </div>
-              <button onClick={() => { onReorder(order.items); onClose(); }}
-                className="flex items-center gap-1.5 bg-orange-50 border border-orange-200 text-orange-600 text-xs font-bold px-3 py-2 rounded-xl active:scale-95 transition-transform">
-                <RefreshCw size={11} /> Reorder
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => { onReorder(order.items); onClose(); }}
+                  className="flex items-center gap-1.5 bg-orange-50 border border-orange-200 text-orange-600 text-xs font-bold px-3 py-2 rounded-xl active:scale-95 transition-transform">
+                  <RefreshCw size={11} /> Reorder
+                </button>
+                {/* Fix 8: save receipt */}
+                <button onClick={() => onShareReceipt(order)}
+                  className="flex items-center gap-1.5 bg-stone-100 border border-stone-200 text-stone-600 text-xs font-bold px-3 py-2 rounded-xl active:scale-95 transition-transform">
+                  <Share2 size={11} /> Receipt
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -1265,10 +1404,21 @@ function CheckoutInfoSheet({ orderType, existing, onSubmit, onClose }) {
 export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const [activeCat,     setActiveCat]     = useState("burgers");
   const [search,        setSearch]        = useState("");
-  const [cart,          setCart]          = useState(() => {
-    try { return JSON.parse(sessionStorage.getItem("bp_cart") || "[]"); } catch { return []; }
+  // Fix 9: cart in localStorage with 2-hour TTL so back-navigation can't lose it
+  const LS_CART = "bp_cart_v2";
+  const CART_TTL = 2 * 60 * 60 * 1000; // 2 hours
+  const [cart, setCart] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LS_CART);
+      if (!raw) return [];
+      const { items, ts } = JSON.parse(raw);
+      if (Date.now() - ts > CART_TTL) { localStorage.removeItem(LS_CART); return []; }
+      return items || [];
+    } catch { return []; }
   });
-  useEffect(() => { sessionStorage.setItem("bp_cart", JSON.stringify(cart)); }, [cart]);
+  useEffect(() => {
+    localStorage.setItem(LS_CART, JSON.stringify({ items: cart, ts: Date.now() }));
+  }, [cart]);
   const [showCart,      setShowCart]      = useState(false);
   const [itemModal,     setItemModal]     = useState(null);
 
@@ -1363,9 +1513,12 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fix 4: track whether menu is from DB or fallback cache
+  const [menuIsStale, setMenuIsStale] = useState(false);
+
   // Load dynamic menu from Supabase
   useEffect(() => {
-    if (!SUPABASE_READY) { setMenuLoaded(true); return; }
+    if (!SUPABASE_READY) { setMenuLoaded(true); setMenuIsStale(true); return; }
     supabase.from("menu_items").select("*")
       .then(({ data, error }) => {
         if (!error && data?.length) {
@@ -1376,6 +1529,10 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
             grouped[item.category].push(parsed);
           });
           setMenu(grouped);
+          setMenuIsStale(false);
+        } else {
+          // DB fetch failed — showing hardcoded DEFAULT_MENU
+          setMenuIsStale(true);
         }
         setMenuLoaded(true);
       });
@@ -1480,6 +1637,16 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     try { await navigator.share({ title: "Burger Point Cart", url }); } catch { await navigator.clipboard?.writeText(url); toast.success("Cart link copied!"); }
   };
 
+  // Fix 8: share/copy order receipt
+  const shareReceipt = async (order) => {
+    const lines = (order.items || []).map(it => `• ${it.name}${it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×${it.qty} — ₹${it.finalPrice * it.qty}`);
+    const text = `🍔 Burger Point Order Receipt\n\n${lines.join("\n")}\n\nTotal: ₹${order.total}\nDate: ${new Date(order.created_at || Date.now()).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}\nPayment: ${order.payment_method || "Cash"}`;
+    try {
+      if (navigator.share) { await navigator.share({ title: "Burger Point Receipt", text }); }
+      else { await navigator.clipboard.writeText(text); toast.success("Receipt copied to clipboard!"); }
+    } catch { try { await navigator.clipboard.writeText(text); toast.success("Receipt copied!"); } catch {} }
+  };
+
   const reorder = async (items) => {
     let toAdd = items;
     let skipped = [];
@@ -1533,10 +1700,12 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       && (!customerInfo?.name || !customerInfo?.phone
           || (orderType === "delivery" && !customerInfo?.address));
     if (needsInfo) {
-      setPendingOpts(opts);
+      setPendingOpts(opts); // Fix 10: always update opts, don't clobber with null
       setShowInfoModal(true);
       return;
     }
+    // If we already have pendingOpts from a previously-dismissed info sheet, keep them
+    setPendingOpts(null);
     setShowRazorpay(opts);
   };
 
@@ -1570,6 +1739,11 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       customer_lat: customerInfo?.lat ?? null, customer_lng: customerInfo?.lng ?? null,
       created_at: new Date().toISOString(),
     };
+    // Fix 2b: persist order to localStorage BEFORE the insert attempt
+    // so a page-refresh during the placing spinner always finds the order
+    sessionStorage.setItem(SS_ORDER, JSON.stringify(payload));
+    localStorage.setItem(LS_ACTIVE_ORDER, JSON.stringify(payload));
+
     if (SUPABASE_READY) {
       try {
         const { error } = await supabase.from("orders").insert(payload);
@@ -1577,7 +1751,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       } catch (err) {
         console.error("Order save error:", err);
         setPlacing(false);
-        // Feature 2: show error card — do NOT clear cart
+        // Fix 2: show error card — do NOT clear cart; keep LS so tracker survives refresh
         setOrderError({ payload, paymentMethod, razorpayPaymentId });
         return;
       }
@@ -1585,8 +1759,6 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     saveHistory(payload);
     setTimeout(() => {
       setCart([]); setPlacing(false);
-      sessionStorage.setItem(SS_ORDER, JSON.stringify(payload));
-      localStorage.setItem(LS_ACTIVE_ORDER, JSON.stringify(payload));
       setPlaced(payload);
     }, 800);
   };
@@ -1610,21 +1782,41 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     }
   };
 
-  // Feature 2: full-screen error card
-  if (orderError) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-red-50 gap-5 p-6 text-center">
-      <div className="w-20 h-20 rounded-full bg-red-100 flex items-center justify-center text-4xl">❌</div>
-      <div>
-        <p className="font-black text-stone-800 text-xl mb-2">Order couldn't be placed</p>
-        <p className="text-sm text-stone-500">Check your connection and try again — your cart is still saved.</p>
+  // Fix 1 + Feature 2: full-screen error card — special message when payment already captured
+  if (orderError) {
+    const paidOnline = !!orderError.razorpayPaymentId;
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-red-50 gap-5 p-6 text-center">
+        <div className="w-20 h-20 rounded-full bg-red-100 flex items-center justify-center text-4xl">
+          {paidOnline ? "💳" : "❌"}
+        </div>
+        <div>
+          <p className="font-black text-stone-800 text-xl mb-2">
+            {paidOnline ? "Payment captured — but order didn't save" : "Order couldn't be placed"}
+          </p>
+          {paidOnline ? (
+            <div className="bg-white border border-red-200 rounded-2xl px-4 py-3 max-w-xs mx-auto mb-2">
+              <p className="text-xs font-bold text-red-600 mb-1">⚠️ Your money is safe</p>
+              <p className="text-xs text-stone-600">Payment ID: <span className="font-mono font-bold text-stone-800">{orderError.razorpayPaymentId}</span></p>
+              <p className="text-xs text-stone-500 mt-1">Screenshot this and call us — we'll confirm your order manually.</p>
+            </div>
+          ) : (
+            <p className="text-sm text-stone-500">Check your connection and try again — your cart is still saved.</p>
+          )}
+        </div>
+        <button onClick={retryOrder} disabled={retrying}
+          className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 text-white px-8 py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-60">
+          {retrying ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Retrying…</> : "🔄 Try Again"}
+        </button>
+        <a href="tel:+919194008822" className="flex items-center gap-2 border border-orange-200 text-orange-600 font-bold text-sm px-6 py-3 rounded-2xl">
+          <Phone size={14} /> Call Restaurant
+        </a>
+        {!paidOnline && (
+          <button onClick={() => setOrderError(null)} className="text-xs text-stone-400 underline">Go back to cart</button>
+        )}
       </div>
-      <button onClick={retryOrder} disabled={retrying}
-        className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 text-white px-8 py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-60">
-        {retrying ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Retrying…</> : "Try Again"}
-      </button>
-      <button onClick={() => setOrderError(null)} className="text-xs text-stone-400 underline">Go back to cart</button>
-    </div>
-  );
+    );
+  }
 
   if (placing) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-orange-50 gap-4">
@@ -1749,6 +1941,20 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         )}
       </div>
 
+      {/* Fix 3: no-live-ordering warning when Supabase env vars missing */}
+      {!SUPABASE_READY && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center gap-2 max-w-2xl mx-auto w-full">
+          <span className="text-amber-600 text-xs">⚠️</span>
+          <p className="text-xs text-amber-800 font-medium flex-1">Live ordering unavailable — please call us to order: <a href="tel:+919194008822" className="font-bold underline">+91 91940 08822</a></p>
+        </div>
+      )}
+      {/* Fix 4: stale menu warning when showing cached/hardcoded items */}
+      {menuIsStale && SUPABASE_READY && menuLoaded && (
+        <div className="bg-stone-100 border-b border-stone-200 px-4 py-2 max-w-2xl mx-auto w-full">
+          <p className="text-xs text-stone-500 text-center">Showing cached menu — prices may differ. <a href="tel:+919194008822" className="text-orange-500 font-bold">Call to confirm.</a></p>
+        </div>
+      )}
+
       {/* Menu — continuous scroll with all categories */}
       <div className="flex-1 max-w-2xl mx-auto w-full px-4 pb-32" ref={menuAreaRef}>
         {!menuLoaded ? (
@@ -1840,10 +2046,14 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           orderType={orderType}
           existing={customerInfo}
           onSubmit={handleInfoSubmit}
-          onClose={() => { setShowInfoModal(false); setPendingOpts(null); }}
+          onClose={() => {
+            setShowInfoModal(false);
+            // Fix 10: keep pendingOpts alive so customer can re-open cart without re-configuring
+            // Don't call setPendingOpts(null) here — only clear on a successful submit or explicit cancel
+          }}
         />
       )}
-      {showHistory && <OrderHistoryModal onClose={() => setShowHistory(false)} onReorder={reorder} />}
+      {showHistory && <OrderHistoryModal onClose={() => setShowHistory(false)} onReorder={reorder} onShareReceipt={shareReceipt} />}
       {showUpdateGate && (
         <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-6 max-w-xs w-full text-center shadow-2xl">
