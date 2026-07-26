@@ -2825,6 +2825,7 @@ function SettingsTab({ riders, setRiders, onLogout }) {
 //  RIDERS TAB
 // ─────────────────────────────────────────────────────────
 function RidersTab() {
+  const toast = useToast();
   const [riders,   setRiders]   = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [showForm, setShowForm] = useState(false);
