@@ -571,6 +571,7 @@ export default function RiderApp() {
   const [tab,          setTab]          = useState("home");
   const [availability, setAvailability] = useState(rider?.availability || "Available");
   const [online,       setOnline]       = useState(true);
+  const { popup, unread, acknowledge } = useRiderNotifications(rider?.rider_id, orders, !!rider);
 
   const login  = (r) => { setRider(r); setAvailability(r.availability); };
   const logout = () => { localStorage.removeItem(LS_RIDER); setRider(null); setOrders([]); };
