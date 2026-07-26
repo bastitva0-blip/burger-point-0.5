@@ -1933,10 +1933,22 @@ function SalesHistoryCard({ o }) {
         <span className="text-base">{o.status === "cancelled" ? "✕" : "😊"}</span>
         <div className="flex-1 min-w-0">
           <p className="text-xs font-bold text-stone-800 truncate">{o.table_label || o.customer_name || "Order"}</p>
-          <p className="text-[10px] text-stone-400">
-            {new Date(o.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-            {o.status === "cancelled" && o.cancel_reason && <span className="text-red-500"> · {o.cancel_reason}</span>}
-          </p>
+          <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+            <p className="text-[10px] text-stone-400">
+              {new Date(o.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+              {o.status === "cancelled" && o.cancel_reason && <span className="text-red-500"> · {o.cancel_reason}</span>}
+            </p>
+            {(() => {
+              const pm = (o.payment_method || "").toLowerCase();
+              const isOnline = pm.includes("razorpay") || pm.includes("online") || pm.includes("upi");
+              return (
+                <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold leading-none
+                  ${isOnline ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>
+                  {isOnline ? "💳 Razorpay" : "💵 Cash"}
+                </span>
+              );
+            })()}
+          </div>
         </div>
         <span className={`text-xs font-black flex-shrink-0 mr-2 ${o.status === "cancelled" ? "text-red-500 line-through" : "text-orange-600"}`}>{currency(o.total)}</span>
         <button onClick={() => setOpen(v => !v)} className="w-6 h-6 flex items-center justify-center text-stone-400 hover:text-stone-600 flex-shrink-0">
