@@ -564,6 +564,7 @@ function LoginScreen({ onLogin }) {
 
 // ── Main RiderApp ─────────────────────────────────────────
 export default function RiderApp() {
+  const { settings: bizSettings } = useBusinessSettings();
   const [rider,        setRider]        = useState(() => { try { return JSON.parse(localStorage.getItem(LS_RIDER)); } catch { return null; } });
   const [orders,       setOrders]       = useState([]);
   const [loading,      setLoading]      = useState(false);
