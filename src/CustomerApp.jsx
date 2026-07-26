@@ -1458,6 +1458,103 @@ function CheckoutInfoSheet({ orderType, existing, onSubmit, onClose }) {
   );
 }
 
+
+// ── Web Push Subscription Hook ────────────────────────────
+// Handles subscribing customers to push notifications.
+// Shows a soft prompt banner first (user gesture required by browsers),
+// then triggers the real OS permission dialog only on explicit tap.
+const LS_PUSH_DISMISSED = "bp_push_dismissed";
+
+function usePushSubscription() {
+  const [banner, setBanner] = useState(false);
+  const [subbed,  setSubbed]  = useState(false);
+
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (!import.meta.env.VITE_VAPID_PUBLIC_KEY) return;
+
+    // Already subscribed or previously dismissed — don't show banner
+    if (localStorage.getItem(LS_PUSH_DISMISSED)) return;
+    if (Notification.permission === "denied") return;
+
+    // If already granted, silently subscribe without showing banner
+    if (Notification.permission === "granted") {
+      subscribeSilently();
+      return;
+    }
+
+    // Show soft prompt after 4 seconds — gives user time to see the app first
+    const t = setTimeout(() => setBanner(true), 4000);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function subscribeSilently() {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+        const raw = Uint8Array.from(
+          atob(vapidKey.replace(/-/g, "+").replace(/_/g, "/")),
+          c => c.charCodeAt(0)
+        );
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: raw });
+      }
+      const subJson = sub.toJSON();
+      await supabase.from("push_subscriptions").upsert({
+        endpoint: subJson.endpoint,
+        p256dh:   subJson.keys?.p256dh,
+        auth:     subJson.keys?.auth,
+        role:     "customer",
+      }, { onConflict: "endpoint" });
+      setSubbed(true);
+    } catch (e) {
+      console.warn("Push subscription failed:", e.message);
+    }
+  }
+
+  const allow = async () => {
+    setBanner(false);
+    localStorage.setItem(LS_PUSH_DISMISSED, "1"); // don't re-prompt regardless of outcome
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") await subscribeSilently();
+  };
+
+  const dismiss = () => {
+    setBanner(false);
+    localStorage.setItem(LS_PUSH_DISMISSED, "1");
+  };
+
+  return { banner, subbed, allow, dismiss };
+}
+
+// ── Push Permission Banner ────────────────────────────────
+function PushBanner({ onAllow, onDismiss }) {
+  return (
+    <div className="fixed bottom-20 left-3 right-3 z-50 max-w-sm mx-auto">
+      <div className="bg-stone-900 text-white rounded-2xl px-4 py-3.5 shadow-2xl flex items-start gap-3 animate-[slideUp_0.3s_ease-out]">
+        <span className="text-2xl flex-shrink-0 mt-0.5">🔔</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold leading-tight">Stay updated on your order</p>
+          <p className="text-xs text-stone-400 mt-0.5 leading-snug">Get notified when your food is ready — even when the app is closed.</p>
+          <div className="flex gap-2 mt-2.5">
+            <button onClick={onAllow}
+              className="flex-1 bg-orange-500 text-white text-xs font-bold py-1.5 rounded-xl active:scale-95 transition-transform">
+              Allow
+            </button>
+            <button onClick={onDismiss}
+              className="flex-1 bg-stone-700 text-stone-300 text-xs font-bold py-1.5 rounded-xl active:scale-95 transition-transform">
+              Not now
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── CUSTOMER APP ──────────────────────────────────────────
 export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const [activeCat,     setActiveCat]     = useState("burgers");
@@ -1524,6 +1621,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const toast = useToast();
 
   const bestsellers = useBestsellers(menu);
+  const { banner: pushBanner, allow: pushAllow, dismiss: pushDismiss } = usePushSubscription();
 
   // Feature 8: real-time cart unavailability
   const [unavailableCartIds, setUnavailableCartIds] = useState(new Set());
@@ -2112,6 +2210,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         />
       )}
       {showHistory && <OrderHistoryModal onClose={() => setShowHistory(false)} onReorder={reorder} onShareReceipt={shareReceipt} />}
+      {pushBanner && <PushBanner onAllow={pushAllow} onDismiss={pushDismiss} />}
       {showUpdateGate && (
         <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-6 max-w-xs w-full text-center shadow-2xl">
