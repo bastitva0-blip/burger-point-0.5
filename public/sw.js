@@ -41,3 +41,34 @@ self.addEventListener('fetch', e => {
     }).catch(() => caches.match('/index.html')))
   );
 });
+
+// ── Web Push — handle incoming push notifications ─────────
+self.addEventListener("push", (e) => {
+  if (!e.data) return;
+  let payload = { title: "Burger Point", body: "You have a new notification", icon: "/icon-192.png" };
+  try { payload = { ...payload, ...e.data.json() }; } catch { payload.body = e.data.text(); }
+  e.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body:    payload.body,
+      icon:    payload.icon || "/icon-192.png",
+      badge:   "/icon-192.png",
+      tag:     "bp-push",
+      renotify: true,
+      vibrate: [100, 50, 100],
+      data:    { url: payload.url || "/" },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = e.notification.data?.url || "/";
+  e.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+      for (const client of list) {
+        if (client.url === url && "focus" in client) return client.focus();
+      }
+      if (clients.openWindow) return clients.openWindow(url);
+    })
+  );
+});

@@ -12,6 +12,7 @@ import {
 import { supabase } from "./supabase.js";
 import { SUPABASE_READY } from "./constants.js";
 import { useToast, RiderCardSkeleton } from "./ui.jsx";
+import { useBusinessSettings } from "./useBusinessSettings.js";
 
 const LS_RIDER = "bp_rider_session";
 const currency = n => `₹${Number(n || 0).toLocaleString("en-IN")}`;
@@ -254,11 +255,15 @@ function OrderCard({ order, onAction, actionLabel, actionColor, actionDisabled }
 }
 
 // ── Home Tab ──────────────────────────────────────────────
-function HomeTab({ rider, orders, onAction, onRefresh, loading }) {
+function HomeTab({ rider, orders, onAction, onRefresh, loading, earningPerKm }) {
   const today = new Date().toISOString().split("T")[0];
   const todayDeliveries = orders.filter(o => o.rider_status === "delivered" && o.delivered_at?.slice(0, 10) === today);
-  const todayEarnings   = todayDeliveries.reduce((s, o) => s + Number(o.total || 0), 0);
-  const activeOrder     = orders.find(o => ["assigned", "accepted", "picked_up"].includes(o.rider_status));
+  // Earnings = distance_km × earning_per_km; fallback to 0 if distance unknown
+  const todayEarnings = todayDeliveries.reduce((s, o) => {
+    const km = Number(o.delivery_distance_km || 0);
+    return s + (km > 0 ? km * earningPerKm : 0);
+  }, 0);
+  const activeOrder = orders.find(o => ["assigned", "accepted", "picked_up"].includes(o.rider_status));
 
   const getAction = (o) => {
     if (o.rider_status === "assigned")  return { label: "✅ Accept Order",   color: "bg-gradient-to-r from-blue-500 to-blue-600" };
@@ -325,7 +330,7 @@ function HomeTab({ rider, orders, onAction, onRefresh, loading }) {
 }
 
 // ── History Tab ───────────────────────────────────────────
-function HistoryTab({ orders }) {
+function HistoryTab({ orders, earningPerKm }) {
   const [search, setSearch] = useState("");
   const [dateFilter, setDateFilter] = useState("");
   const delivered = orders.filter(o => o.rider_status === "delivered").sort((a, b) => new Date(b.delivered_at) - new Date(a.delivered_at));
@@ -334,6 +339,10 @@ function HistoryTab({ orders }) {
     const matchDate   = !dateFilter || (o.delivered_at || "").slice(0, 10) === dateFilter;
     return matchSearch && matchDate;
   });
+  const totalEarned = filtered.reduce((s, o) => {
+    const km = Number(o.delivery_distance_km || 0);
+    return s + (km > 0 ? km * earningPerKm : 0);
+  }, 0);
 
   return (
     <div className="px-4 py-4">
@@ -353,24 +362,39 @@ function HistoryTab({ orders }) {
           <p className="text-stone-400 text-sm">No deliveries found</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {filtered.map(o => (
-            <div key={o.id} className="bg-white rounded-2xl border border-stone-100 px-4 py-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-bold text-stone-800 text-sm">{o.customer_name || "Customer"}</p>
-                  <p className="text-xs text-stone-400 mt-0.5">{o.delivered_at ? fmt(o.delivered_at) : "—"}</p>
-                  <p className="text-xs text-stone-400 truncate mt-0.5">📍 {o.delivery_address || "—"}</p>
-                </div>
-                <div className="text-right flex-shrink-0 ml-3">
-                  <p className="font-black text-orange-600">{currency(o.total)}</p>
-                  <p className="text-[10px] text-stone-400 mt-0.5">{o.payment_method || "Cash"}</p>
-                  <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✓ Done</span>
+        <>
+          {/* Earnings summary for filtered period */}
+          <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-4 mb-4 text-white">
+            <p className="text-xs font-bold opacity-80">{dateFilter ? "Earnings for selected date" : "Total Earnings Shown"}</p>
+            <p className="text-2xl font-black mt-1">₹{Math.round(totalEarned)}</p>
+            <p className="text-xs opacity-70 mt-0.5">₹{earningPerKm}/km × distance · {filtered.length} deliveries</p>
+          </div>
+          <div className="space-y-2">
+          {filtered.map(o => {
+            const km = Number(o.delivery_distance_km || 0);
+            const earned = km > 0 ? Math.round(km * earningPerKm) : null;
+            return (
+              <div key={o.id} className="bg-white rounded-2xl border border-stone-100 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-bold text-stone-800 text-sm">{o.customer_name || "Customer"}</p>
+                    <p className="text-xs text-stone-400 mt-0.5">{o.delivered_at ? fmt(o.delivered_at) : "—"}</p>
+                    <p className="text-xs text-stone-400 truncate mt-0.5">📍 {o.delivery_address || "—"}</p>
+                    {km > 0 && <p className="text-xs text-blue-500 mt-0.5">📏 {km.toFixed(1)} km</p>}
+                  </div>
+                  <div className="text-right flex-shrink-0 ml-3">
+                    <p className="font-black text-orange-600">{currency(o.total)}</p>
+                    {earned !== null
+                      ? <p className="text-xs font-bold text-green-600 mt-0.5">You earned ₹{earned}</p>
+                      : <p className="text-xs text-stone-400 mt-0.5">Dist. unknown</p>}
+                    <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✓ Done</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            );
+          })}
+          </div>
+        </>
       )}
     </div>
   );
@@ -601,7 +625,39 @@ export default function RiderApp() {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...payload } : o));
   };
 
-  const { popup, unread, acknowledge } = useRiderNotifications(rider?.rider_id, orders, !!rider);
+  // Register push subscription for this rider
+  useEffect(() => {
+    if (!rider || !SUPABASE_READY || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    (async () => {
+      try {
+        const { data: biz } = await supabase.from("business_settings").select("vapid_public_key").eq("id", 1).single();
+        const vapidKey = biz?.vapid_public_key;
+        if (!vapidKey) return;
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") return;
+        const reg = await navigator.serviceWorker.ready;
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          const key = vapidKey.replace(/-/g, "+").replace(/_/g, "/");
+          const raw = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: raw });
+        }
+        const subJson = sub.toJSON();
+        await supabase.from("push_subscriptions").upsert({
+          endpoint: subJson.endpoint,
+          p256dh: subJson.keys?.p256dh,
+          auth: subJson.keys?.auth,
+          user_type: "rider",
+          phone: rider.phone_number || null,
+          rider_id: rider.rider_id || null,
+          subscribed_at: new Date().toISOString(),
+        }, { onConflict: "endpoint" });
+      } catch (e) {
+        console.warn("Rider push subscription failed:", e.message);
+      }
+    })();
+  }, [rider]);
+  const earningPerKm = Number(bizSettings?.earning_per_km ?? 10);
 
   if (!rider) return <LoginScreen onLogin={login} />;
 
@@ -657,9 +713,9 @@ export default function RiderApp() {
 
       {/* Content — simple tab switch, no AnimatePresence (causes blank on mobile) */}
       <div className="flex-1 overflow-y-auto pb-6 overscroll-contain">
-        {tab === "home"    && <HomeTab rider={rider} orders={orders} onAction={advanceOrder} onRefresh={fetchOrders} loading={loading} />}
-        {tab === "history" && <HistoryTab orders={orders} />}
-        {tab === "profile" && <ProfileTab rider={rider} orders={orders} availability={availability} onAvailChange={changeAvailability} onLogout={logout} />}
+        {tab === "home"    && <HomeTab rider={rider} orders={orders} onAction={advanceOrder} onRefresh={fetchOrders} loading={loading} earningPerKm={earningPerKm} />}
+        {tab === "history" && <HistoryTab orders={orders} earningPerKm={earningPerKm} />}
+        {tab === "profile" && <ProfileTab rider={rider} orders={orders} availability={availability} onAvailChange={changeAvailability} onLogout={logout} earningPerKm={earningPerKm} />}
       </div>
 
       {/* New order popup */}

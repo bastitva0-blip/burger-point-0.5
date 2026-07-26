@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import QRCode from "qrcode";
 import { useToast, OrderCardSkeleton, SalesSkeleton, CustomerRowSkeleton, RiderCardSkeleton } from "./ui.jsx";
 import {
-  Plus, Trash2, Edit2, X, LogOut, RefreshCw,
+  Plus, Trash2, Edit2, Edit3, X, LogOut, RefreshCw,
   CheckCircle, Users, BarChart2, Settings, ShoppingBag,
   Wifi, WifiOff, ArrowLeft, Phone, Lock, Eye, EyeOff,
   Bike, Tag, CalendarDays, Clock, ToggleLeft, ToggleRight,
+  Send, Bell,
   Image, ChevronDown, ChevronUp, Save, Printer,
   Search, LayoutGrid, XCircle,
 } from "lucide-react";
@@ -2263,6 +2264,7 @@ function BusinessSettingsSection() {
         <Field label="Base Delivery Charge (₹)"><input type="number" value={form.base_delivery_charge ?? ""} onChange={numSet("base_delivery_charge")} className={inputCls} /></Field>
         <Field label="Base Distance (km)"><input type="number" value={form.base_distance_km ?? ""} onChange={numSet("base_distance_km")} className={inputCls} /></Field>
         <Field label="Additional Charge / km (₹)"><input type="number" value={form.per_km_charge ?? ""} onChange={numSet("per_km_charge")} className={inputCls} /></Field>
+        <Field label="Rider Earning / km (₹)"><input type="number" value={form.earning_per_km ?? ""} onChange={numSet("earning_per_km")} className={inputCls} placeholder="10" /></Field>
         <Field label="Max Delivery Distance (km)"><input type="number" value={form.delivery_radius_km ?? ""} onChange={numSet("delivery_radius_km")} className={inputCls} /></Field>
         <Field label="Free Delivery Above (₹)"><input type="number" value={form.free_delivery_above ?? ""} onChange={numSet("free_delivery_above")} className={inputCls} /></Field>
         <Field label="Avg Delivery Speed (km/h)"><input type="number" value={form.avg_delivery_speed_kmph ?? ""} onChange={numSet("avg_delivery_speed_kmph")} className={inputCls} /></Field>
@@ -2289,42 +2291,134 @@ function BusinessSettingsSection() {
 //  CATEGORY ENABLE/DISABLE (Phase 2)
 // ─────────────────────────────────────────────────────────
 function CategoriesSection() {
-  const [cats, setCats]       = useState([]);
-  const [loading, setLoading] = useState(true);
+  const toast = useToast();
+  const [cats, setCats]         = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing]   = useState(null);
+  const [saving, setSaving]     = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const blank = { label: "", emoji: "🍽️", img: "", sort_order: 0, enabled: true };
+  const [form, setForm]         = useState(blank);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!SUPABASE_READY) { setLoading(false); return; }
-    supabase.from("categories").select("*").order("sort_order")
-      .then(({ data }) => { setCats(data && data.length ? data : CATEGORIES.map((c, i) => ({ ...c, enabled: true, sort_order: i }))); setLoading(false); });
+    const { data } = await supabase.from("categories").select("*").order("sort_order");
+    setCats(data && data.length ? data : CATEGORIES.map((c, i) => ({ ...c, enabled: true, sort_order: i })));
+    setLoading(false);
   }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openAdd  = () => { setForm({ ...blank, sort_order: cats.length }); setEditing(null); setShowForm(true); };
+  const openEdit = (c) => { setForm({ label: c.label, emoji: c.emoji || "🍽️", img: c.img || "", sort_order: c.sort_order ?? 0, enabled: c.enabled !== false }); setEditing(c.id); setShowForm(true); };
+
+  const save = async () => {
+    if (!form.label.trim()) { toast.error("Section name is required."); return; }
+    setSaving(true);
+    const payload = { label: form.label.trim(), emoji: form.emoji || "🍽️", img: form.img || null, sort_order: Number(form.sort_order) || 0, enabled: form.enabled };
+    if (editing) {
+      const { error } = await supabase.from("categories").update(payload).eq("id", editing);
+      setSaving(false);
+      if (error) { toast.error("Save failed — " + error.message); return; }
+    } else {
+      const id = form.label.trim().toLowerCase().replace(/[^a-z0-9]/g, "_") + "_" + Date.now();
+      const { error } = await supabase.from("categories").insert({ id, ...payload });
+      setSaving(false);
+      if (error) { toast.error("Add failed — " + error.message); return; }
+    }
+    setShowForm(false); load();
+  };
 
   const toggle = async (id, current) => {
     setCats(prev => prev.map(c => c.id === id ? { ...c, enabled: !current } : c));
-    if (SUPABASE_READY) {
-      const { error } = await supabase.from("categories").update({ enabled: !current }).eq("id", id);
-      if (error) {
-        setCats(prev => prev.map(c => c.id === id ? { ...c, enabled: current } : c));
-        toast.error("⚠️ Couldn't update category — " + error.message);
-      }
-    }
+    const { error } = await supabase.from("categories").update({ enabled: !current }).eq("id", id);
+    if (error) { setCats(prev => prev.map(c => c.id === id ? { ...c, enabled: current } : c)); toast.error("Update failed — " + error.message); }
   };
 
-  if (loading) return <Section emoji="📂" title="Menu Categories"><p className="text-xs text-stone-400">Loading…</p></Section>;
+  const del = async (id) => {
+    if (pendingDelete !== id) { setPendingDelete(id); setTimeout(() => setPendingDelete(null), 3000); return; }
+    setPendingDelete(null);
+    const { error } = await supabase.from("categories").delete().eq("id", id);
+    if (error) { toast.error("Delete failed — " + error.message); return; }
+    load();
+  };
+
+  if (loading) return <Section emoji="📂" title="Menu Sections"><p className="text-xs text-stone-400">Loading…</p></Section>;
 
   return (
-    <Section emoji="📂" title="Menu Categories">
-      <p className="text-xs text-stone-400 mb-3">Turn off a whole category to hide it (and everything in it) from customers — items stay saved, nothing is deleted.</p>
-      <div className="grid grid-cols-2 gap-2">
+    <Section emoji="📂" title="Menu Sections">
+      <p className="text-xs text-stone-400 mb-3">Add, edit, or hide sections. Hiding a section removes it from the customer menu without deleting items.</p>
+      <div className="space-y-2 mb-3">
         {cats.map(c => (
-          <button key={c.id} onClick={() => toggle(c.id, c.enabled !== false)}
-            className={`flex items-center justify-between px-3 py-2.5 rounded-xl border-2 text-xs font-bold ${c.enabled !== false ? "bg-white border-stone-100 text-stone-700" : "bg-stone-50 border-stone-200 text-stone-400 opacity-60"}`}>
-            <span>{c.emoji} {c.label}</span>
-            <div className={`w-9 h-5 rounded-full relative transition-all flex-shrink-0 ${c.enabled !== false ? "bg-green-500" : "bg-stone-300"}`}>
-              <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${c.enabled !== false ? "right-0.5" : "left-0.5"}`} />
+          <div key={c.id} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 ${c.enabled !== false ? "bg-white border-stone-100" : "bg-stone-50 border-stone-200 opacity-60"}`}>
+            <span className="text-lg flex-shrink-0">{c.emoji}</span>
+            <span className="flex-1 text-xs font-bold text-stone-700 truncate">{c.label}</span>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button onClick={() => openEdit(c)} className="w-7 h-7 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500 hover:bg-orange-100">
+                <Edit3 size={11} />
+              </button>
+              <button onClick={() => toggle(c.id, c.enabled !== false)}
+                className={`w-9 h-5 rounded-full relative transition-all ${c.enabled !== false ? "bg-green-500" : "bg-stone-300"}`}>
+                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${c.enabled !== false ? "right-0.5" : "left-0.5"}`} />
+              </button>
+              <button onClick={() => del(c.id)}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${pendingDelete === c.id ? "bg-red-500 text-white" : "bg-red-50 text-red-400 hover:bg-red-100"}`}>
+                {pendingDelete === c.id ? <span className="text-xs font-black">!</span> : <Trash2 size={11} />}
+              </button>
             </div>
-          </button>
+          </div>
         ))}
       </div>
+      <button onClick={openAdd} className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-orange-200 text-orange-500 font-bold text-xs py-3 rounded-xl hover:bg-orange-50 active:scale-95 transition-all">
+        <Plus size={14} /> Add New Section
+      </button>
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-end bg-black/50 backdrop-blur-sm" onClick={() => setShowForm(false)}>
+          <div className="w-full max-w-xl mx-auto bg-white rounded-t-3xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-stone-200 rounded-full mx-auto mb-1" />
+            <p className="font-black text-stone-800 text-base">{editing ? "Edit Section" : "Add New Section"}</p>
+            <div className="flex gap-2">
+              <div className="w-16">
+                <p className="text-xs font-bold text-stone-500 mb-1">Emoji</p>
+                <input value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))}
+                  className="w-full border-2 border-stone-200 rounded-xl px-2 py-2.5 text-center text-xl outline-none focus:border-orange-400" maxLength={2} />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs font-bold text-stone-500 mb-1">Section Name *</p>
+                <input value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} placeholder="e.g. Specials"
+                  className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <p className="text-xs font-bold text-stone-500 mb-1">Sort Order (lower = first)</p>
+                <input type="number" value={form.sort_order} onChange={e => setForm(f => ({ ...f, sort_order: e.target.value }))}
+                  className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400" />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs font-bold text-stone-500 mb-1">Cover Image URL</p>
+                <input value={form.img} onChange={e => setForm(f => ({ ...f, img: e.target.value }))} placeholder="https://…"
+                  className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400" />
+              </div>
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <p className="text-sm font-bold text-stone-700">Visible to customers</p>
+              <button onClick={() => setForm(f => ({ ...f, enabled: !f.enabled }))}
+                className={`w-12 h-6 rounded-full relative transition-all ${form.enabled ? "bg-green-500" : "bg-stone-300"}`}>
+                <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${form.enabled ? "right-0.5" : "left-0.5"}`} />
+              </button>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setShowForm(false)} className="flex-1 border-2 border-stone-200 text-stone-600 py-3 rounded-2xl font-bold text-sm">Cancel</button>
+              <button onClick={save} disabled={saving}
+                className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 text-white py-3 rounded-2xl font-bold text-sm disabled:opacity-60">
+                {saving ? "Saving…" : editing ? "Save Changes" : "Add Section"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
@@ -2338,6 +2432,112 @@ function Section({ title, emoji, children }) {
       <p className="text-sm font-bold text-stone-800 mb-3 flex items-center gap-2">{emoji} {title}</p>
       {children}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+//  NOTIFICATIONS SECTION — Web Push via VAPID + Edge Function
+// ─────────────────────────────────────────────────────────
+function NotificationsSection() {
+  const toast = useToast();
+  const [title,     setTitle]     = useState("🍔 Burger Point");
+  const [message,   setMessage]   = useState("");
+  const [audience,  setAudience]  = useState("all"); // all | customers | riders
+  const [sending,   setSending]   = useState(false);
+  const [subCount,  setSubCount]  = useState(null);
+
+  // Load subscription count
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    supabase.from("push_subscriptions").select("id", { count: "exact", head: true })
+      .then(({ count }) => setSubCount(count ?? 0));
+  }, []);
+
+  const send = async () => {
+    if (!message.trim()) { toast.error("Message is required."); return; }
+    setSending(true);
+    try {
+      const { error } = await supabase.functions.invoke("send-push", {
+        body: { title, message, audience },
+      });
+      if (error) throw error;
+      toast.success(`✅ Notification sent to ${audience === "all" ? "everyone" : audience}!`);
+      setMessage("");
+    } catch (e) {
+      toast.error("⚠️ Send failed — " + (e.message || "check Edge Function logs"));
+    }
+    setSending(false);
+  };
+
+  const notifyRidersOnline = async () => {
+    setSending(true);
+    try {
+      const { error } = await supabase.functions.invoke("send-push", {
+        body: {
+          title: "🛵 Burger Point — Orders Live!",
+          message: "The app is now accepting delivery orders. Check for new assignments.",
+          audience: "riders",
+        },
+      });
+      if (error) throw error;
+      toast.success("✅ All riders notified!");
+    } catch (e) {
+      toast.error("⚠️ Failed — " + (e.message || "check Edge Function logs"));
+    }
+    setSending(false);
+  };
+
+  return (
+    <Section emoji="🔔" title="Push Notifications">
+      <p className="text-xs text-stone-400 mb-3">
+        Send background push notifications to customers and riders — arrives even when the app is closed.
+        {subCount !== null && <span className="ml-1 font-bold text-stone-600">{subCount} device{subCount !== 1 ? "s" : ""} subscribed.</span>}
+      </p>
+
+      {/* Quick action */}
+      <button onClick={notifyRidersOnline} disabled={sending}
+        className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-bold text-sm py-3 rounded-xl mb-4 active:scale-95 transition-transform disabled:opacity-60">
+        <Bike size={14} /> Notify All Riders — App is Live
+      </button>
+
+      {/* Custom message */}
+      <div className="space-y-3">
+        <div>
+          <p className="text-xs font-bold text-stone-500 mb-1">Audience</p>
+          <div className="flex gap-2">
+            {[["all", "👥 Everyone"], ["customers", "🛒 Customers"], ["riders", "🛵 Riders"]].map(([val, lbl]) => (
+              <button key={val} onClick={() => setAudience(val)}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${audience === val ? "bg-orange-500 text-white border-orange-500" : "bg-white text-stone-600 border-stone-200"}`}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-bold text-stone-500 mb-1">Notification Title</p>
+          <input value={title} onChange={e => setTitle(e.target.value)}
+            className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400" />
+        </div>
+
+        <div>
+          <p className="text-xs font-bold text-stone-500 mb-1">Message *</p>
+          <textarea value={message} onChange={e => setMessage(e.target.value)} rows={3}
+            placeholder="e.g. 🎉 Happy Hour! 20% off all orders for the next 2 hours."
+            className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400 resize-none" />
+        </div>
+
+        <button onClick={send} disabled={sending || !message.trim()}
+          className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 text-white font-bold text-sm py-3 rounded-xl active:scale-95 transition-transform disabled:opacity-60">
+          <Send size={14} /> {sending ? "Sending…" : "Send Notification"}
+        </button>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+          <p className="text-xs font-bold text-amber-700 mb-1">⚙️ Setup required</p>
+          <p className="text-xs text-amber-600">This needs the <code className="bg-amber-100 px-1 rounded">send-push</code> Edge Function deployed and VAPID keys configured. Run <code className="bg-amber-100 px-1 rounded">phase7_web_push.sql</code> first.</p>
+        </div>
+      </div>
+    </Section>
   );
 }
 
@@ -2451,6 +2651,7 @@ function SettingsTab({ riders, setRiders, onLogout }) {
     <div className="space-y-0">
       <BusinessSettingsSection />
       <CategoriesSection />
+      <NotificationsSection />
       {/* ── BUSY MODE ── */}
       <Section emoji="🔴" title="Open / Closed Toggle">
         <div className="flex items-center justify-between mb-3">

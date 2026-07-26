@@ -8,7 +8,7 @@ const DEFAULTS = {
   logo_url: "",
   phone: "+919194008822",
   address: "60 Feet Road, Jankipuram, Lucknow - 226021",
-  gst_number: "09ACOFA177BK1ZS",        // ← NEW: printed on every invoice
+  gst_number: "09ACOFA177BK1ZS",
   opening_time: "11:00",
   closing_time: "23:00",
   emergency_close: false,
@@ -26,6 +26,14 @@ const DEFAULTS = {
   avg_delivery_speed_kmph: 25,
   hide_unavailable_items: false,
   version: "1.0.0",
+  // Rider earnings
+  earning_per_km: 10,
+  // Wait times
+  wait_dine: 15,
+  wait_takeaway: 20,
+  wait_delivery: 40,
+  // Web push
+  vapid_public_key: "",
 };
 
 // One fetch shared across every component that mounts this hook in the

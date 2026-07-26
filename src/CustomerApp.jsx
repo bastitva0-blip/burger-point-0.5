@@ -659,7 +659,43 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     return () => clearInterval(t);
   }, [status, order.created_at, order.order_type, waitTimes]);
 
-  // Fix 13: confirmation sound + haptic when tracker first appears (order just placed)
+  // Web Push subscription — register on tracker mount for customers
+  useEffect(() => {
+    if (!SUPABASE_READY || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    (async () => {
+      try {
+        // Get VAPID public key from business_settings
+        const { data: biz } = await supabase.from("business_settings").select("vapid_public_key").eq("id", 1).single();
+        const vapidKey = biz?.vapid_public_key;
+        if (!vapidKey) return; // Not configured yet
+
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") return;
+
+        const reg = await navigator.serviceWorker.ready;
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          // Convert VAPID key from base64 to Uint8Array
+          const key = vapidKey.replace(/-/g, "+").replace(/_/g, "/");
+          const raw = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: raw });
+        }
+        // Save subscription to Supabase
+        const subJson = sub.toJSON();
+        await supabase.from("push_subscriptions").upsert({
+          endpoint: subJson.endpoint,
+          p256dh: subJson.keys?.p256dh,
+          auth: subJson.keys?.auth,
+          user_type: "customer",
+          phone: order.customer_phone || null,
+          subscribed_at: new Date().toISOString(),
+        }, { onConflict: "endpoint" });
+      } catch (e) {
+        console.warn("Push subscription failed:", e.message);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     // Only fire the chime once, when the order is still brand-new (placed in the last 30s)
     const age = Date.now() - new Date(order.created_at).getTime();
