@@ -478,9 +478,14 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
 const RZP_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID || "";
 
 function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose, onCancel }) {
-  const [loading, setLoading] = useState(false);
-  const [err,     setErr]     = useState("");
-  const [failed,  setFailed]  = useState(false);
+  const [loading,    setLoading]    = useState(false);
+  const [err,        setErr]        = useState("");
+  const [failed,     setFailed]     = useState(false);
+  // Tracks whether Razorpay checkout was opened — disables Cash fallback to prevent
+  // the race condition where ondismiss fires before handler after a successful capture.
+  const [rzpOpened,  setRzpOpened]  = useState(false);
+  // Ref so the ondismiss closure always sees the latest value without a stale capture.
+  const paymentCapturedRef = useRef(false);
 
   const loadScript = () =>
     new Promise(resolve => {
@@ -494,6 +499,7 @@ function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose
 
   const openRazorpay = async () => {
     setLoading(true); setErr(""); setFailed(false);
+    paymentCapturedRef.current = false;
     const ok = await loadScript();
     setLoading(false);
     if (!ok) { setErr("Could not load Razorpay. Check your internet and try again."); return; }
@@ -506,8 +512,21 @@ function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose
       description: "Food Order",
       prefill: { name: customerName || "", contact: customerPhone || "" },
       theme: { color: "#f97316" },
-      handler: (response) => onSuccess(response.razorpay_payment_id),
-      modal: { ondismiss: () => setLoading(false) },
+      handler: (response) => {
+        // Mark captured BEFORE calling onSuccess so ondismiss (which may fire
+        // right after on some devices/browsers) sees the flag and bails out.
+        paymentCapturedRef.current = true;
+        onSuccess(response.razorpay_payment_id);
+      },
+      modal: {
+        ondismiss: () => {
+          // If payment was already captured, do nothing — finaliseOrder is already
+          // running via handler above. Showing the modal again would let the customer
+          // accidentally place a duplicate Cash order against the same Razorpay charge.
+          if (paymentCapturedRef.current) return;
+          setLoading(false);
+        },
+      },
     };
 
     const rzp = new window.Razorpay(options);
@@ -515,6 +534,7 @@ function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose
       setFailed(true);
       setErr("Payment failed: " + (resp.error?.description || "Please try again."));
     });
+    setRzpOpened(true);   // lock out Cash button from this point on
     rzp.open();
   };
 
@@ -550,10 +570,15 @@ function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose
             : failed ? <>🔄 Try Again</> : <>💳 Pay ₹{amount} Online</>}
         </button>
 
-        <button onClick={onClose}
-          className="w-full border-2 border-dashed border-stone-200 text-stone-500 text-sm font-bold py-3.5 rounded-2xl hover:border-orange-300 hover:text-orange-600 transition-all">
+        <button onClick={onClose} disabled={rzpOpened}
+          className="w-full border-2 border-dashed border-stone-200 text-stone-500 text-sm font-bold py-3.5 rounded-2xl hover:border-orange-300 hover:text-orange-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:text-stone-500">
           💵 Pay Cash at Counter / Door
         </button>
+        {rzpOpened && (
+          <p className="text-center text-[10px] text-stone-400 mt-1">
+            Payment in progress — please complete or close the Razorpay window
+          </p>
+        )}
 
         <div className="flex items-center justify-center gap-4 mt-4">
           <span className="text-[10px] text-stone-400">🔒 100% Secure</span>
