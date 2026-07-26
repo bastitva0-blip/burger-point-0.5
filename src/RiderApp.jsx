@@ -630,8 +630,7 @@ export default function RiderApp() {
     if (!rider || !SUPABASE_READY || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
     (async () => {
       try {
-        const { data: biz } = await supabase.from("business_settings").select("vapid_public_key").eq("id", 1).single();
-        const vapidKey = biz?.vapid_public_key;
+        const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
         if (!vapidKey) return;
         const permission = await Notification.requestPermission();
         if (permission !== "granted") return;
@@ -647,10 +646,8 @@ export default function RiderApp() {
           endpoint: subJson.endpoint,
           p256dh: subJson.keys?.p256dh,
           auth: subJson.keys?.auth,
-          user_type: "rider",
-          phone: rider.phone_number || null,
+          role: "rider",
           rider_id: rider.rider_id || null,
-          subscribed_at: new Date().toISOString(),
         }, { onConflict: "endpoint" });
       } catch (e) {
         console.warn("Rider push subscription failed:", e.message);
