@@ -1,6 +1,6 @@
 // ══════════════════════════════════════════════════════════
 //  Burger Point — send-push Edge Function
-//  Deploy: supabase functions deploy send-push
+//  Deploy: supabase functions deploy send-push --no-verify-jwt
 //
 //  Required env vars in Supabase Dashboard → Settings → Edge Functions:
 //    VAPID_PUBLIC_KEY   — from: npx web-push generate-vapid-keys
@@ -12,11 +12,16 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
 const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const VAPID_PUB     = Deno.env.get("VAPID_PUBLIC_KEY")!;
 const VAPID_PRIV    = Deno.env.get("VAPID_PRIVATE_KEY")!;
-const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") || "mailto:admin@burgerpoint.co.in";
+const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") || Deno.env.get("VAPID_MAILTO") || "mailto:admin@burgerpoint.co.in";
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -27,7 +32,6 @@ async function signVapid(audience: string): Promise<string> {
   const payload = btoa(JSON.stringify({ aud: audience, exp: now + 86400, sub: VAPID_SUBJECT })).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   const toSign = `${header}.${payload}`;
 
-  // Import VAPID private key (base64url → raw)
   const rawKey = Uint8Array.from(atob(VAPID_PRIV.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
   const cryptoKey = await crypto.subtle.importKey("raw", rawKey, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
   const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, cryptoKey, new TextEncoder().encode(toSign));
@@ -39,9 +43,9 @@ async function signVapid(audience: string): Promise<string> {
 // ── Send a single push notification ───────────────────────
 async function sendOne(sub: { endpoint: string; p256dh: string; auth: string }, payload: string): Promise<boolean> {
   try {
-    const url  = new URL(sub.endpoint);
+    const url      = new URL(sub.endpoint);
     const audience = `${url.protocol}//${url.host}`;
-    const jwt  = await signVapid(audience);
+    const jwt      = await signVapid(audience);
 
     const res = await fetch(sub.endpoint, {
       method: "POST",
@@ -55,7 +59,6 @@ async function sendOne(sub: { endpoint: string; p256dh: string; auth: string }, 
     });
 
     if (res.status === 410 || res.status === 404) {
-      // Subscription expired — clean it up
       await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
       return false;
     }
@@ -67,32 +70,57 @@ async function sendOne(sub: { endpoint: string; p256dh: string; auth: string }, 
 
 // ── Main handler ───────────────────────────────────────────
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" } });
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: CORS_HEADERS });
+  }
 
   try {
-    const { title, message, audience = "all", url = "/" } = await req.json() as { title: string; message: string; audience?: string; url?: string };
+    const { title, message, audience = "all", url = "/" } = await req.json() as {
+      title: string;
+      message: string;
+      audience?: string;
+      url?: string;
+    };
 
-    if (!title || !message) return new Response(JSON.stringify({ error: "title and message required" }), { status: 400 });
+    if (!title || !message) {
+      return new Response(JSON.stringify({ error: "title and message required" }), {
+        status: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
 
     // Fetch target subscriptions
     let query = supabase.from("push_subscriptions").select("endpoint, p256dh, auth");
-    if (audience === "customers") query = query.eq("user_type", "customer");
-    else if (audience === "riders") query = query.eq("user_type", "rider");
+    if (audience === "customers") query = query.eq("role", "customer");
+    else if (audience === "riders")   query = query.eq("role", "rider");
 
     const { data: subs, error } = await query;
-    if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
-    if (!subs || subs.length === 0) return new Response(JSON.stringify({ sent: 0, message: "No subscribers" }), { status: 200 });
+    if (error) {
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
+    if (!subs || subs.length === 0) {
+      return new Response(JSON.stringify({ sent: 0, message: "No subscribers" }), {
+        status: 200,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      });
+    }
 
     const payload = JSON.stringify({ title, body: message, icon: "/icon-192.png", url });
-
-    // Send all in parallel (max 50 concurrent)
     const results = await Promise.allSettled(subs.map(s => sendOne(s, payload)));
-    const sent = results.filter(r => r.status === "fulfilled" && r.value).length;
+    const sent    = results.filter(r => r.status === "fulfilled" && r.value).length;
 
     return new Response(JSON.stringify({ sent, total: subs.length }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
     });
+
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), { status: 500 });
+    return new Response(JSON.stringify({ error: String(e) }), {
+      status: 500,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    });
   }
 });
