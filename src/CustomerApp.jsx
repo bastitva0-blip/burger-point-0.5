@@ -664,9 +664,8 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     if (!SUPABASE_READY || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
     (async () => {
       try {
-        // Get VAPID public key from business_settings
-        const { data: biz } = await supabase.from("business_settings").select("vapid_public_key").eq("id", 1).single();
-        const vapidKey = biz?.vapid_public_key;
+        // Get VAPID public key from env variable
+        const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
         if (!vapidKey) return; // Not configured yet
 
         const permission = await Notification.requestPermission();
@@ -686,9 +685,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           endpoint: subJson.endpoint,
           p256dh: subJson.keys?.p256dh,
           auth: subJson.keys?.auth,
-          user_type: "customer",
-          phone: order.customer_phone || null,
-          subscribed_at: new Date().toISOString(),
+          role: "customer",
         }, { onConflict: "endpoint" });
       } catch (e) {
         console.warn("Push subscription failed:", e.message);
