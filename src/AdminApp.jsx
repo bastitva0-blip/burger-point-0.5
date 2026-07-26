@@ -2313,6 +2313,47 @@ function CategoriesSection() {
   const blank = { label: "", emoji: "🍽️", img: "", sort_order: 0, enabled: true };
   const [form, setForm]         = useState(blank);
 
+  // ── Image upload (mirrors MenuTab pattern) ──
+  const [uploadingImg, setUploadingImg] = useState(false);
+  const imgInputRef = useRef(null);
+
+  const handleImgUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isJpg = file.type === "image/jpeg"
+      || file.name.toLowerCase().endsWith(".jpg")
+      || file.name.toLowerCase().endsWith(".jpeg");
+    if (!isJpg) {
+      toast.error("Only JPG/JPEG images are allowed.");
+      if (imgInputRef.current) imgInputRef.current.value = "";
+      return;
+    }
+
+    if (!SUPABASE_READY) {
+      toast.error("Storage not configured. Please set up Supabase environment variables.");
+      return;
+    }
+
+    setUploadingImg(true);
+    const baseName = file.name.replace(/\.[^.]+$/, "").replace(/[^a-z0-9]/gi, "_");
+    const fileName = `categories/${Date.now()}_${baseName}.jpg`;
+    const { data, error } = await supabase.storage
+      .from("menu-images")
+      .upload(fileName, file, { contentType: "image/jpeg", upsert: true });
+
+    if (error) {
+      toast.error(`Upload failed: ${error.message}`);
+    } else {
+      const { data: { publicUrl } } = supabase.storage
+        .from("menu-images")
+        .getPublicUrl(data.path);
+      setForm(f => ({ ...f, img: publicUrl }));
+    }
+    setUploadingImg(false);
+    if (imgInputRef.current) imgInputRef.current.value = "";
+  };
+
   const load = useCallback(async () => {
     if (!SUPABASE_READY) { setLoading(false); return; }
     const { data } = await supabase.from("categories").select("*").order("sort_order");
@@ -2364,7 +2405,10 @@ function CategoriesSection() {
       <div className="space-y-2 mb-3">
         {cats.map(c => (
           <div key={c.id} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 ${c.enabled !== false ? "bg-white border-stone-100" : "bg-stone-50 border-stone-200 opacity-60"}`}>
-            <span className="text-lg flex-shrink-0">{c.emoji}</span>
+            {c.img
+              ? <img src={c.img} alt={c.label} className="w-8 h-8 rounded-lg object-cover flex-shrink-0" onError={e => e.target.style.display = "none"} />
+              : <span className="text-lg flex-shrink-0">{c.emoji}</span>
+            }
             <span className="flex-1 text-xs font-bold text-stone-700 truncate">{c.label}</span>
             <div className="flex items-center gap-1.5 flex-shrink-0">
               <button onClick={() => openEdit(c)} className="w-7 h-7 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500 hover:bg-orange-100">
@@ -2390,6 +2434,8 @@ function CategoriesSection() {
           <div className="w-full max-w-xl mx-auto bg-white rounded-t-3xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
             <div className="w-10 h-1 bg-stone-200 rounded-full mx-auto mb-1" />
             <p className="font-black text-stone-800 text-base">{editing ? "Edit Section" : "Add New Section"}</p>
+
+            {/* Emoji + Name */}
             <div className="flex gap-2">
               <div className="w-16">
                 <p className="text-xs font-bold text-stone-500 mb-1">Emoji</p>
@@ -2402,18 +2448,60 @@ function CategoriesSection() {
                   className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400" />
               </div>
             </div>
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <p className="text-xs font-bold text-stone-500 mb-1">Sort Order (lower = first)</p>
-                <input type="number" value={form.sort_order} onChange={e => setForm(f => ({ ...f, sort_order: e.target.value }))}
-                  className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400" />
-              </div>
-              <div className="flex-1">
-                <p className="text-xs font-bold text-stone-500 mb-1">Cover Image URL</p>
-                <input value={form.img} onChange={e => setForm(f => ({ ...f, img: e.target.value }))} placeholder="https://…"
-                  className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400" />
-              </div>
+
+            {/* Sort order */}
+            <div>
+              <p className="text-xs font-bold text-stone-500 mb-1">Sort Order <span className="font-normal text-stone-400">(lower = first)</span></p>
+              <input type="number" value={form.sort_order} onChange={e => setForm(f => ({ ...f, sort_order: e.target.value }))}
+                className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400" />
             </div>
+
+            {/* Cover image — upload + URL fallback */}
+            <div>
+              <p className="text-xs font-bold text-stone-500 mb-1 flex items-center gap-1">
+                <Image size={9} /> Cover Image <span className="font-normal text-stone-400">(JPG only, optional)</span>
+              </p>
+              {/* File picker */}
+              <label className={`flex items-center gap-2 w-full border-2 border-dashed rounded-xl px-4 py-3 cursor-pointer transition-colors
+                ${uploadingImg ? "border-orange-300 bg-orange-50" : "border-stone-200 hover:border-orange-400 bg-white"}`}>
+                <Image size={14} className="text-stone-400 flex-shrink-0" />
+                <span className="text-sm text-stone-500 flex-1">
+                  {uploadingImg ? "Uploading…" : "Click to upload JPG"}
+                </span>
+                <input
+                  ref={imgInputRef}
+                  type="file"
+                  accept=".jpg,.jpeg,image/jpeg"
+                  className="hidden"
+                  disabled={uploadingImg}
+                  onChange={handleImgUpload}
+                />
+              </label>
+              {/* URL fallback */}
+              <p className="text-[10px] text-stone-400 mt-1 mb-1">Or paste a URL directly:</p>
+              <input
+                value={form.img}
+                onChange={e => setForm(f => ({ ...f, img: e.target.value }))}
+                placeholder="https://…"
+                className="w-full border-2 border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-orange-400"
+              />
+              {/* Preview + remove */}
+              {form.img && (
+                <div className="mt-2 relative">
+                  <img src={form.img} alt="preview"
+                    className="h-24 w-full object-cover rounded-xl"
+                    onError={e => e.target.style.display = "none"} />
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, img: "" }))}
+                    className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-0.5 hover:bg-black/70">
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Visibility toggle */}
             <div className="flex items-center justify-between py-1">
               <p className="text-sm font-bold text-stone-700">Visible to customers</p>
               <button onClick={() => setForm(f => ({ ...f, enabled: !f.enabled }))}
@@ -2421,9 +2509,10 @@ function CategoriesSection() {
                 <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${form.enabled ? "right-0.5" : "left-0.5"}`} />
               </button>
             </div>
+
             <div className="flex gap-2 pt-1">
               <button onClick={() => setShowForm(false)} className="flex-1 border-2 border-stone-200 text-stone-600 py-3 rounded-2xl font-bold text-sm">Cancel</button>
-              <button onClick={save} disabled={saving}
+              <button onClick={save} disabled={saving || uploadingImg}
                 className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 text-white py-3 rounded-2xl font-bold text-sm disabled:opacity-60">
                 {saving ? "Saving…" : editing ? "Save Changes" : "Add Section"}
               </button>
