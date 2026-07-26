@@ -98,3 +98,8 @@ body {
 .add-pop        { animation: addPop     0.18s ease-out; }
 .fly-up         { animation: flyUp      0.4s ease-out forwards; }
 .total-flash    { animation: totalFlash 0.4s ease-out; }
+
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
