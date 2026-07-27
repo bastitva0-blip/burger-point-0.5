@@ -1,97 +1,38 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import * as webpush from "https://esm.sh/web-push@3.6.7";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const VAPID_PUB     = Deno.env.get("VAPID_PUBLIC_KEY")!;
-const VAPID_PRIV    = Deno.env.get("VAPID_PRIVATE_KEY")!;
-const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") ?? Deno.env.get("VAPID_MAILTO") ?? "mailto:admin@burgerpoint.co.in";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const VAPID_PUB    = Deno.env.get("VAPID_PUBLIC_KEY")!;
+const VAPID_PRIV   = Deno.env.get("VAPID_PRIVATE_KEY")!;
+const VAPID_MAILTO = Deno.env.get("VAPID_SUBJECT") ?? Deno.env.get("VAPID_MAILTO") ?? "mailto:admin@burgerpoint.co.in";
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-// ── Import VAPID private key using JWK (the correct format for EC private keys) ──
-async function getSigningKey(): Promise<CryptoKey> {
-  // VAPID_PUB is an uncompressed EC point: 0x04 || 32-byte X || 32-byte Y
-  const pubRaw = Uint8Array.from(
-    atob(VAPID_PUB.replace(/-/g, "+").replace(/_/g, "/")),
-    c => c.charCodeAt(0),
-  );
-  const toB64url = (bytes: Uint8Array) =>
-    btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+webpush.setVapidDetails(VAPID_MAILTO, VAPID_PUB, VAPID_PRIV);
 
-  const x = toB64url(pubRaw.slice(1, 33));
-  const y = toB64url(pubRaw.slice(33, 65));
-
-  return crypto.subtle.importKey(
-    "jwk",
-    { kty: "EC", crv: "P-256", d: VAPID_PRIV, x, y },
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["sign"],
-  );
-}
-
-// ── Build VAPID JWT ──
-async function signVapid(audience: string): Promise<string> {
-  const b64url = (s: string) =>
-    btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-
-  const header  = b64url(JSON.stringify({ typ: "JWT", alg: "ES256" }));
-  const now     = Math.floor(Date.now() / 1000);
-  const payload = b64url(JSON.stringify({ aud: audience, exp: now + 86400, sub: VAPID_SUBJECT }));
-  const toSign  = `${header}.${payload}`;
-
-  const key = await getSigningKey();
-  const sig  = await crypto.subtle.sign(
-    { name: "ECDSA", hash: "SHA-256" },
-    key,
-    new TextEncoder().encode(toSign),
-  );
-  const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-
-  return `${toSign}.${sigB64}`;
-}
-
-// ── Send one push notification ──
 async function sendOne(sub: { endpoint: string; p256dh: string; auth: string }, payload: string): Promise<boolean> {
   try {
-    const url      = new URL(sub.endpoint);
-    const audience = `${url.protocol}//${url.host}`;
-    const jwt      = await signVapid(audience);
-
-    const res = await fetch(sub.endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type":  "application/json",
-        "Authorization": `vapid t=${jwt},k=${VAPID_PUB}`,
-        "TTL":           "86400",
-      },
-      body: payload,
-    });
-
-    if (res.status === 410 || res.status === 404) {
+    await webpush.sendNotification(
+      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+      payload,
+    );
+    return true;
+  } catch (e: any) {
+    if (e?.statusCode === 410 || e?.statusCode === 404) {
       await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
-      return false;
+    } else {
+      console.error("sendOne failed:", e?.statusCode, e?.body);
     }
-
-    if (!res.ok) {
-      const text = await res.text();
-      console.error("FCM error:", res.status, text);
-    }
-
-    return res.ok;
-  } catch (e) {
-    console.error("sendOne failed:", e);
     return false;
   }
 }
 
-// ── Main handler ──
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
