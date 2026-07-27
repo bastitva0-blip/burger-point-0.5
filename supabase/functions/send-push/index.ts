@@ -64,15 +64,51 @@ async function sendOne(sub: { endpoint: string; p256dh: string; auth: string }, 
     const audience = `${url.protocol}//${url.host}`;
     const jwt      = await signVapid(audience);
 
+    const authSecret  = Uint8Array.from(atob(sub.auth.replace(/-/g,"+").replace(/_/g,"/")), c => c.charCodeAt(0));
+    const receiverPub = Uint8Array.from(atob(sub.p256dh.replace(/-/g,"+").replace(/_/g,"/")), c => c.charCodeAt(0));
+
+    const senderKeys   = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+    const senderPubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", senderKeys.publicKey));
+    const receiverKey  = await crypto.subtle.importKey("raw", receiverPub, { name: "ECDH", namedCurve: "P-256" }, false, []);
+    const sharedBits   = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: receiverKey }, senderKeys.privateKey, 256));
+    const salt         = crypto.getRandomValues(new Uint8Array(16));
+
+    const concat = (...arrays: Uint8Array[]) => { const out = new Uint8Array(arrays.reduce((n,a)=>n+a.length,0)); let i=0; for(const a of arrays){out.set(a,i);i+=a.length;} return out; };
+    const enc    = (s: string) => new TextEncoder().encode(s);
+    const lenBuf = (n: number) => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, n, false); return b; };
+
+    const ikmKey = await crypto.subtle.importKey("raw", concat(authSecret, sharedBits), "HKDF", false, ["deriveBits"]);
+    const prk    = new Uint8Array(await crypto.subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt: authSecret, info: concat(enc("WebPush: info\0"), receiverPub, senderPubRaw) },
+      ikmKey, 256
+    ));
+
+    const hkdf = async (info: Uint8Array, len: number) => {
+      const k = await crypto.subtle.importKey("raw", prk, "HKDF", false, ["deriveBits"]);
+      return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info }, k, len * 8));
+    };
+
+    const keyInfo   = concat(enc("Content-Encoding: aes128gcm\0"), salt, lenBuf(senderPubRaw.length), senderPubRaw, enc("Content-Encoding: aes128gcm\0"), new Uint8Array(1));
+    const nonceInfo = concat(enc("Content-Encoding: aes128gcm\0"), salt, lenBuf(senderPubRaw.length), senderPubRaw, enc("Content-Encoding: nonce\0"),       new Uint8Array(1));
+    const cek   = await hkdf(keyInfo,   16);
+    const nonce = await hkdf(nonceInfo, 12);
+
+    const aesKey     = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
+    const plaintext  = concat(enc(payload), new Uint8Array([2]));
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, aesKey, plaintext));
+
+    const rs   = new Uint8Array(4); new DataView(rs.buffer).setUint32(0, 4096, false);
+    const body = concat(salt, rs, new Uint8Array([senderPubRaw.length]), senderPubRaw, ciphertext);
+
     const res = await fetch(sub.endpoint, {
       method: "POST",
       headers: {
-        "Content-Type":    "application/octet-stream",
-        "Authorization":   `vapid t=${jwt},k=${VAPID_PUB}`,
-        "TTL":             "86400",
-        "Content-Encoding":"aes128gcm",
+        "Content-Type":     "application/octet-stream",
+        "Content-Encoding": "aes128gcm",
+        "Authorization":    `vapid t=${jwt},k=${VAPID_PUB}`,
+        "TTL":              "86400",
       },
-      body: new TextEncoder().encode(payload),
+      body,
     });
 
     if (res.status === 410 || res.status === 404) {
@@ -80,7 +116,8 @@ async function sendOne(sub: { endpoint: string; p256dh: string; auth: string }, 
       return false;
     }
     return res.ok;
-  } catch {
+  } catch (e) {
+    console.error("sendOne failed:", e);
     return false;
   }
 }
