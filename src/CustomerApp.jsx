@@ -504,6 +504,26 @@ function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose
     setLoading(false);
     if (!ok) { setErr("Could not load Razorpay. Check your internet and try again."); return; }
 
+    // Log every Razorpay attempt to Supabase so no payment event is ever lost.
+    // Fires for success, failure, and dismiss — gives full audit trail.
+    const logRazorpayEvent = async (event, extra = {}) => {
+      try {
+        if (typeof supabase !== "undefined") {
+          await supabase.from("razorpay_events").insert({
+            event,
+            amount,
+            customer_name: customerName || null,
+            customer_phone: customerPhone || null,
+            created_at: new Date().toISOString(),
+            ...extra,
+          });
+        }
+      } catch (e) {
+        // Non-blocking — never fail the payment flow because of a log write
+        console.warn("razorpay_events log failed:", e);
+      }
+    };
+
     const options = {
       key: RZP_KEY_ID,
       amount: amount * 100,
@@ -516,14 +536,16 @@ function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose
         // Mark captured BEFORE calling onSuccess so ondismiss (which may fire
         // right after on some devices/browsers) sees the flag and bails out.
         paymentCapturedRef.current = true;
+        logRazorpayEvent("success", { razorpay_payment_id: response.razorpay_payment_id });
         onSuccess(response.razorpay_payment_id);
       },
       modal: {
         ondismiss: () => {
           // If payment was already captured, do nothing — finaliseOrder is already
-          // running via handler above. Showing the modal again would let the customer
-          // accidentally place a duplicate Cash order against the same Razorpay charge.
+          // running via handler above. Without this guard, ondismiss fires right
+          // after handler on some Android browsers and would trigger a duplicate path.
           if (paymentCapturedRef.current) return;
+          logRazorpayEvent("dismissed");
           setLoading(false);
         },
       },
@@ -531,6 +553,9 @@ function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose
 
     const rzp = new window.Razorpay(options);
     rzp.on("payment.failed", (resp) => {
+      const desc = resp.error?.description || "Unknown error";
+      const code = resp.error?.code || null;
+      logRazorpayEvent("failed", { error_description: desc, error_code: code });
       setFailed(true);
       setErr("Payment failed: " + (resp.error?.description || "Please try again."));
     });
@@ -1922,16 +1947,21 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const retryOrder = async () => {
     if (!orderError) return;
     setRetrying(true);
-    const { payload, paymentMethod } = orderError;
+    const { payload } = orderError;
+    // Use a fresh ID on retry so there's no duplicate-key conflict
+    const retryPayload = { ...payload, id: crypto.randomUUID() };
     try {
-      const { error } = await supabase.from("orders").insert({ ...payload, id: crypto.randomUUID() });
+      const { error } = await supabase.from("orders").insert(retryPayload);
       if (error) throw error;
+      saveHistory(retryPayload);
+      sessionStorage.setItem(SS_ORDER, JSON.stringify(retryPayload));
+      localStorage.setItem(LS_ACTIVE_ORDER, JSON.stringify(retryPayload));
+      // Clear error + cart, then show tracker — same order as finaliseOrder's success path
       setOrderError(null);
-      saveHistory(payload);
-      setCart([]); setRetrying(false);
-      sessionStorage.setItem(SS_ORDER, JSON.stringify(payload));
-      localStorage.setItem(LS_ACTIVE_ORDER, JSON.stringify(payload));
-      setPlaced(payload);
+      setCart([]);
+      setRetrying(false);
+      setPlacing(false);
+      setPlaced(retryPayload);
     } catch (err) {
       console.error("Retry error:", err);
       setRetrying(false);
@@ -2194,7 +2224,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       {showRazorpay && (
         <RazorpayModal amount={showRazorpay.total} customerName={customerInfo?.name || tableLabel || "Customer"} customerPhone={customerInfo?.phone}
           onSuccess={(paymentId) => finaliseOrder(showRazorpay, "Razorpay (Online)", paymentId)}
-          onClose={() => finaliseOrder(showRazorpay, "Cash")}
+          onClose={() => setShowRazorpay(null)}
           onCancel={() => setShowRazorpay(null)} />
       )}
       {showInfoModal && (
