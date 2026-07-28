@@ -854,8 +854,9 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     };
     fetchNow(3000); // initial fetch; retry after 3 s if it fails
 
-    // 2. Subscribe to real-time changes — fires the instant admin updates the row
-    let fallbackTimer = null;
+    // 2. Subscribe to real-time changes — fires the instant admin updates the row.
+    //    NOTE: Realtime only works if the orders table has replication enabled in Supabase
+    //    (Database → Replication → supabase_realtime publication → toggle orders ON).
     const channel = supabase
       .channel(`order-${order.id}`)
       .on(
@@ -863,18 +864,19 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
         { event: "UPDATE", schema: "public", table: "orders", filter: `id=eq.${order.id}` },
         (payload) => applyUpdate(payload.new)
       )
-      .subscribe((state) => {
-        // Fallback: if realtime can't connect, poll every 5 seconds instead
-        if ((state === "CHANNEL_ERROR" || state === "TIMED_OUT") && !fallbackTimer) {
-          fallbackTimer = setInterval(() => fetchNow(0), 5000);
-        } else if (state === "SUBSCRIBED" && fallbackTimer) {
-          clearInterval(fallbackTimer);
-          fallbackTimer = null;
-        }
-      });
+      .subscribe();
+
+    // 3. Always-on polling every 10 s — guarantees updates even when Realtime is
+    //    "SUBSCRIBED" but the orders table has replication disabled (silent no-op).
+    const pollTimer = setInterval(() => fetchNow(0), 10000);
+
+    // 4. Re-fetch immediately when the customer switches back to this tab/app.
+    const onVisible = () => { if (document.visibilityState === "visible") fetchNow(0); };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
-      if (fallbackTimer) clearInterval(fallbackTimer);
+      clearInterval(pollTimer);
+      document.removeEventListener("visibilitychange", onVisible);
       supabase.removeChannel(channel);
     };
   }, [order.id]);
