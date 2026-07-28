@@ -477,7 +477,7 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
 // ── REAL RAZORPAY MODAL ───────────────────────────────────
 const RZP_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID || "";
 
-function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose, onCancel }) {
+function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess, onClose, onCancel }) {
   const [loading,    setLoading]    = useState(false);
   const [err,        setErr]        = useState("");
   const [failed,     setFailed]     = useState(false);
@@ -532,6 +532,7 @@ function RazorpayModal({ amount, customerName, customerPhone, onSuccess, onClose
       description: "Food Order",
       prefill: { name: customerName || "", contact: customerPhone || "" },
       theme: { color: "#f97316" },
+      notes: orderId ? { burger_point_order_id: orderId } : undefined,
       handler: (response) => {
         // Mark captured BEFORE calling onSuccess so ondismiss (which may fire
         // right after on some devices/browsers) sees the flag and bails out.
@@ -1889,23 +1890,24 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     }
     // If we already have pendingOpts from a previously-dismissed info sheet, keep them
     setPendingOpts(null);
-    setShowRazorpay(opts);
+    setShowRazorpay({ ...opts, _orderId: crypto.randomUUID() });
   };
 
   // Called when info modal is submitted
   const handleInfoSubmit = (info) => {
     saveCustomerInfo(info);
     setShowInfoModal(false);
-    if (pendingOpts) { setShowRazorpay(pendingOpts); setPendingOpts(null); }
+    if (pendingOpts) { setShowRazorpay({ ...pendingOpts, _orderId: crypto.randomUUID() }); setPendingOpts(null); }
   };
 
   const [orderError,    setOrderError]    = useState(null);  // Feature 2: placement error
   const [retrying,      setRetrying]      = useState(false);
 
-  const finaliseOrder = async ({ note, total, discount, promoCode, deliveryFee, packingCharge, gstAmount, distanceKm }, paymentMethod, razorpayPaymentId = null) => {
+  const finaliseOrder = async (opts, paymentMethod, razorpayPaymentId = null) => {
+    const { note, total, discount, promoCode, deliveryFee, packingCharge, gstAmount, distanceKm } = opts;
     setShowRazorpay(null); setPlacing(true); setOrderError(null);
     const payload = {
-      id: crypto.randomUUID(),
+      id: opts._orderId || crypto.randomUUID(),
       table_code: code || null,
       table_label: tableLabel || null,
       order_type: orderType,
@@ -2225,6 +2227,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       )}
       {showRazorpay && (
         <RazorpayModal amount={showRazorpay.total} customerName={customerInfo?.name || tableLabel || "Customer"} customerPhone={customerInfo?.phone}
+          orderId={showRazorpay._orderId}
           onSuccess={(paymentId) => finaliseOrder(showRazorpay, "Razorpay (Online)", paymentId)}
           onClose={() => setShowRazorpay(null)}
           onCancel={() => setShowRazorpay(null)} />
