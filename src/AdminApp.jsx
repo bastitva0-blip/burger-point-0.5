@@ -1746,7 +1746,7 @@ function MenuTab() {
         </div>
       ) : (
         Object.entries(grouped).map(([cat, catItems]) => {
-          const catData = CATEGORIES.find(c => c.id === cat);
+          const catData = CATEGORIES.find(c => c.id === cat) || dbCats.find(c => c.id === cat);
           return (
             <div key={cat} className="mb-5">
               <p className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-2">{catData?.emoji} {catData?.label || cat}</p>
