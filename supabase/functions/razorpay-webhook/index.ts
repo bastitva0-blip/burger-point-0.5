@@ -75,7 +75,7 @@ Deno.serve(async (req) => {
   // ── Event: payment.captured ──────────────────────────────────────────────
   // Fires when money actually lands — this is the authoritative success signal.
   if (event === "payment.captured") {
-    const payment      = payload.entity ?? payload.payload?.payment?.entity;
+    const payment = payload.payload?.payment?.entity;
     const paymentId    = payment?.id as string;          // e.g. pay_XXXXX
     const amountPaise  = payment?.amount as number;      // in paise
     const notes        = payment?.notes ?? {};           // optional notes from order creation
