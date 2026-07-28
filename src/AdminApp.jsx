@@ -1557,6 +1557,7 @@ function AddonBuilder({ addons, onChange }) {
 //  MENU MANAGEMENT TAB
 // ─────────────────────────────────────────────────────────
 function MenuTab() {
+  const [dbCats, setDbCats] = useState([]);
   const [items,   setItems]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -1615,6 +1616,12 @@ function MenuTab() {
   }, []);
 
   useEffect(() => { if (SUPABASE_READY) loadItems(); }, [loadItems]);
+
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    supabase.from("categories").select("*").order("sort_order")
+      .then(({ data }) => { if (data?.length) setDbCats(data); });
+  }, []);
 
   const openAdd = () => { setForm(blankForm); setEditing(null); setFormErr(""); setShowForm(true); };
   const openEdit = (item) => {
@@ -1801,7 +1808,7 @@ function MenuTab() {
                   <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Category</label>
                   <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
                     className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-3 outline-none text-stone-700">
-                    {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>)}
+                    {(dbCats.length ? dbCats : CATEGORIES).map(c => <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>)}
                   </select>
                 </div>
                 <div>
