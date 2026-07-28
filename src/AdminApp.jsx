@@ -1977,6 +1977,12 @@ function SalesHistoryCard({ o }) {
             </div>
           ))}
           {o.note && <p className="text-[11px] text-stone-400 italic pt-1">Note: "{o.note}"</p>}
+          {o.promo_code && (
+            <div className="flex justify-between text-xs pt-0.5">
+              <span className="text-green-600 font-bold">🏷️ {o.promo_code}</span>
+              <span className="text-green-600 font-bold">−{currency(o.discount)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-xs font-black pt-1 border-t border-stone-200/70 mt-1">
             <span className="text-stone-700">Total</span>
             <span className="text-orange-600">₹{o.total}</span>
