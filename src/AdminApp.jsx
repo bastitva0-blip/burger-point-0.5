@@ -3429,7 +3429,7 @@ export default function AdminApp() {
         }
       });
 
-    return () => { clearFallback(); supabase.removeChannel(ch); };
+    const autoRefresh = setInterval(() => fetchOrders(), 2 * 60 * 1000); return () => { clearFallback(); supabase.removeChannel(ch); clearInterval(autoRefresh); };
   }, [authed, fetchOrders]);
 
   const TERMINAL_STATUSES = new Set(["cancelled", "served"]);
