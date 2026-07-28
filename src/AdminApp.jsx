@@ -1557,6 +1557,7 @@ function AddonBuilder({ addons, onChange }) {
 //  MENU MANAGEMENT TAB
 // ─────────────────────────────────────────────────────────
 function MenuTab() {
+  const toast = useToast();
   const [dbCats, setDbCats] = useState([]);
   const [items,   setItems]   = useState([]);
   const [loading, setLoading] = useState(true);
