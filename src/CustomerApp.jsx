@@ -565,7 +565,7 @@ function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm">
       <div className="w-full bg-white rounded-t-3xl max-w-lg mx-auto p-6" onClick={e => e.stopPropagation()}>
         <div className="w-10 h-1 bg-stone-200 rounded-full mx-auto mb-5" />
         <div className="flex items-center gap-3 mb-6">
@@ -1975,8 +1975,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       sessionStorage.setItem(SS_ORDER, JSON.stringify(retryPayload));
       localStorage.setItem(LS_ACTIVE_ORDER, JSON.stringify(retryPayload));
       // Clear error + cart, then show tracker — same order as finaliseOrder's success path
+      setCart([]);       // clear cart first
       setOrderError(null);
-      setCart([]);
       setRetrying(false);
       setPlacing(false);
       setPlaced(retryPayload);
