@@ -1888,6 +1888,12 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       setShowInfoModal(true);
       return;
     }
+    // Bug 2 fix: dine-in has no online payment — skip RazorpayModal entirely
+    // and place cash order directly. Only delivery/takeaway go through Razorpay modal.
+    if (orderType === "dine-in") {
+      finaliseOrder({ ...opts, _orderId: crypto.randomUUID() }, "Cash");
+      return;
+    }
     // If we already have pendingOpts from a previously-dismissed info sheet, keep them
     setPendingOpts(null);
     setShowRazorpay({ ...opts, _orderId: crypto.randomUUID() });
@@ -1897,7 +1903,15 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const handleInfoSubmit = (info) => {
     saveCustomerInfo(info);
     setShowInfoModal(false);
-    if (pendingOpts) { setShowRazorpay({ ...pendingOpts, _orderId: crypto.randomUUID() }); setPendingOpts(null); }
+    // Bug 5 fix: capture pendingOpts before clearing — if it somehow got cleared,
+    // re-open cart so order is never silently dropped after info submission.
+    const optsToUse = pendingOpts;
+    setPendingOpts(null);
+    if (optsToUse) {
+      setShowRazorpay({ ...optsToUse, _orderId: crypto.randomUUID() });
+    } else {
+      setShowCart(true); // fallback: re-open cart so customer can retry
+    }
   };
 
   const [orderError,    setOrderError]    = useState(null);  // Feature 2: placement error
