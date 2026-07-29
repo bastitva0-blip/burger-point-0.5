@@ -477,7 +477,7 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
 // ── REAL RAZORPAY MODAL ───────────────────────────────────
 const RZP_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID || "";
 
-function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess, onClose, onCancel }) {
+function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess, onClose, onCancel, onCash }) {
   const [loading,    setLoading]    = useState(false);
   const [err,        setErr]        = useState("");
   const [failed,     setFailed]     = useState(false);
@@ -596,7 +596,7 @@ function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess
             : failed ? <>🔄 Try Again</> : <>💳 Pay ₹{amount} Online</>}
         </button>
 
-        <button onClick={onClose} disabled={rzpOpened}
+        <button onClick={onCash} disabled={rzpOpened}
           className="w-full border-2 border-dashed border-stone-200 text-stone-500 text-sm font-bold py-3.5 rounded-2xl hover:border-orange-300 hover:text-orange-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:text-stone-500">
           💵 Pay Cash at Counter / Door
         </button>
@@ -2229,6 +2229,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         <RazorpayModal amount={showRazorpay.total} customerName={customerInfo?.name || tableLabel || "Customer"} customerPhone={customerInfo?.phone}
           orderId={showRazorpay._orderId}
           onSuccess={(paymentId) => finaliseOrder(showRazorpay, "Razorpay (Online)", paymentId)}
+          onCash={() => finaliseOrder(showRazorpay, "Cash")}
           onClose={() => setShowRazorpay(null)}
           onCancel={() => setShowRazorpay(null)} />
       )}
