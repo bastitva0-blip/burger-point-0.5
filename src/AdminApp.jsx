@@ -160,9 +160,10 @@ export function buildInvoice(order, settings = {}) {
   const items     = order.items || [];
   const subTotal  = items.reduce((s, it) => s + Number(it.finalPrice || it.price || 0) * Number(it.qty || 1), 0);
   const discount  = Number(order.discount || 0);
+  const delivery  = Number(order.delivery_fee ?? 0);
   const packing   = Number(order.packing_charge ?? order.packingCharge ?? settings.packing_charge ?? 0);
   const gstAmt    = gstPct > 0 ? Math.round((subTotal - discount) * gstPct / 100) : 0;
-  const grandTotal = Number(order.total || (subTotal - discount + packing + gstAmt));
+  const grandTotal = Number(order.total || (subTotal - discount + delivery + packing + gstAmt));
   const cur       = (n) => "Rs." + Number(n || 0).toFixed(2);
 
   const cmds = [
@@ -215,6 +216,7 @@ export function buildInvoice(order, settings = {}) {
   cmds.push(pDiv("-"));
   cmds.push(pRow("Sub Total", cur(subTotal)));
   if (discount > 0)   cmds.push(pRow("Discount Fixed", "-" + cur(discount)));
+  if (delivery > 0)   cmds.push(pRow("Delivery Charge", cur(delivery)));
   if (packing > 0)    cmds.push(pRow("Packaging Charge", cur(packing)));
   if (gstAmt > 0)     cmds.push(pRow(`GST (${gstPct}%)`, cur(gstAmt)));
   if (order.promo_code) cmds.push(pRow("Promo: " + order.promo_code, "Applied"));
@@ -318,10 +320,11 @@ function buildReceiptHTML(order, settings = {}, isKOT = false) {
   const totalQty  = items.reduce((s, it) => s + Number(it.qty || 1), 0);
   const subTotal  = items.reduce((s, it) => s + Number(it.finalPrice || it.price || 0) * Number(it.qty || 1), 0);
   const discount  = Number(order.discount || 0);
+  const delivery  = Number(order.delivery_fee ?? 0);
   const packing   = Number(order.packing_charge ?? order.packingCharge ?? settings.packing_charge ?? 0);
   const taxable   = subTotal - discount;
   const gstAmt    = gstPct > 0 ? Math.round(taxable * gstPct / 100) : 0;
-  const grandTotal = Number(order.total || (taxable + packing + gstAmt));
+  const grandTotal = Number(order.total || (taxable + delivery + packing + gstAmt));
   const cur = (n) => "Rs." + Number(n || 0).toFixed(0);
 
   // ── KOT ─────────────────────────────────────────────────
@@ -420,7 +423,8 @@ function buildReceiptHTML(order, settings = {}, isKOT = false) {
   <table class="totals">
     <tr><td class="lbl">Total Qty</td><td class="val">${totalQty}</td></tr>
     <tr><td class="lbl">Subtotal</td><td class="val">${cur(subTotal)}</td></tr>
-    ${discount > 0 ? `<tr><td class="lbl">Discount</td><td class="val">-${cur(discount)}</td></tr>` : ""}
+    ${discount > 0 ? `<tr><td class="lbl">Discount${order.promo_code ? ` (${order.promo_code})` : ""}</td><td class="val">-${cur(discount)}</td></tr>` : ""}
+    ${delivery > 0 ? `<tr><td class="lbl">Delivery Charge</td><td class="val">${cur(delivery)}</td></tr>` : ""}
     ${packing  > 0 ? `<tr><td class="lbl">Packaging</td><td class="val">${cur(packing)}</td></tr>` : ""}
     ${gstAmt   > 0 ? `
       <tr><td class="lbl">CGST (${(gstPct/2).toFixed(1)}%)</td><td class="val">${cur(gstAmt/2)}</td></tr>
