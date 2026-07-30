@@ -54,11 +54,12 @@ const saveHistory = (order) => {
 export function ItemThumb({ item, className = "w-16 h-16", children }) {
   const [err, setErr] = useState(false);
   const cat = CATEGORIES.find(c => c.id === item.category);
+  const emoji = item.emoji || cat?.emoji || "🍽️";
   return (
     <div className={`${className} rounded-2xl flex-shrink-0 overflow-hidden bg-orange-50 relative`}>
       {!err && item.img
         ? <img src={item.img} alt={item.name} loading="lazy" className="w-full h-full object-cover" onError={() => setErr(true)} />
-        : <div className="w-full h-full flex items-center justify-center text-2xl bg-gradient-to-br from-orange-100 to-amber-100">{cat?.emoji || "🍽️"}</div>
+        : <div className="w-full h-full flex items-center justify-center text-2xl bg-gradient-to-br from-orange-100 to-amber-100">{emoji}</div>
       }
       {children}
     </div>
@@ -1636,7 +1637,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const [placing,       setPlacing]       = useState(false);
   const [showRazorpay,  setShowRazorpay]  = useState(null);
   const [showHistory,   setShowHistory]   = useState(false);
-  const [menu,          setMenu]          = useState(DEFAULT_MENU);
+  const [menu,          setMenu]          = useState({});
   const [dbCategories,  setDbCategories]  = useState(null); // null = not loaded yet
   const { settings: bizSettings } = useBusinessSettings();
   const [favs,          setFavs]          = useState(() => { try { return JSON.parse(localStorage.getItem(LS_FAVS) || "[]"); } catch { return []; } });
@@ -1722,17 +1723,27 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       });
   }, []);
 
-  // Load category enable/disable flags
+  // Load categories fully from Supabase — id, label, emoji, sort_order, enabled
+  // This means adding a new category in Supabase automatically shows it here;
+  // no code deploy needed. CATEGORIES constant is only used as a last-resort fallback.
   useEffect(() => {
     if (!SUPABASE_READY) { setDbCategories([]); return; }
-    supabase.from("categories").select("id, enabled")
+    supabase.from("categories").select("id, label, emoji, sort_order, enabled")
+      .order("sort_order", { ascending: true })
       .then(({ data }) => setDbCategories(data || []));
   }, []);
 
   const visibleCategories = (() => {
-    if (!dbCategories || dbCategories.length === 0) return CATEGORIES; // fallback: nothing disabled yet
-    const disabled = new Set(dbCategories.filter(c => c.enabled === false).map(c => c.id));
-    return CATEGORIES.filter(c => !disabled.has(c.id));
+    if (!dbCategories || dbCategories.length === 0) return CATEGORIES; // fallback if DB not ready yet
+    return dbCategories
+      .filter(c => c.enabled !== false)                     // hide disabled categories
+      .filter(c => menu[c.id]?.length > 0 || !menuLoaded)  // hide categories with no items (once loaded)
+      .map(c => ({
+        id:    c.id,
+        label: c.label,
+        emoji: c.emoji || "🍽️",
+        img:   CATEGORIES.find(hc => hc.id === c.id)?.img || null, // reuse hardcoded img if available
+      }));
   })();
 
   useEffect(() => {
@@ -1744,6 +1755,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   }, [dbCategories]);
 
   const enabledCatIds = new Set(visibleCategories.map(c => c.id));
+  // ALL includes every item whose category is currently visible & enabled
+  // Since menu is keyed by category id from Supabase, new categories auto-appear
   const ALL = Object.values(menu).flat().filter(i => enabledCatIds.has(i.category));
 
   const filteredItems = (() => {
