@@ -1,8 +1,6 @@
 // ─────────────────────────────────────────────────────────
 //  BURGER POINT — shared constants
-// ─────────────────────────────────────────────────────────
-
-export const ADMIN_PASSWORD = "Burger@2026"; // 👈 change this to whatever password you want
+// ─────────────────────────────────────────────────────────// 👈 change this to whatever password you want
 export const REVIEW_URL  = "https://qr-review-saas.vercel.app/q/0U9GC7";
 export const SITE_URL    = "https://burgerpoint.co.in";
 export const WHATSAPP    = "https://wa.me/919194008822";

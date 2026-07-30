@@ -11,8 +11,7 @@ import {
   Search, LayoutGrid, XCircle,
 } from "lucide-react";
 import { supabase } from "./supabase.js";
-import {
-  ADMIN_PASSWORD, SUPABASE_READY, STATUS_CFG, getNextStep, CATEGORIES, DEFAULT_MENU, ALL_ITEMS, TABLE_CODES,
+import { SUPABASE_READY, STATUS_CFG, getNextStep, CATEGORIES, DEFAULT_MENU, ALL_ITEMS, TABLE_CODES,
   CANCEL_REASONS, ACTIVE_STATUSES,
 } from "./constants.js";
 import { useBusinessSettings } from "./useBusinessSettings.js";
