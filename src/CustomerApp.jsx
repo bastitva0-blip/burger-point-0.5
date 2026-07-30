@@ -1728,7 +1728,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   // no code deploy needed. CATEGORIES constant is only used as a last-resort fallback.
   useEffect(() => {
     if (!SUPABASE_READY) { setDbCategories([]); return; }
-    supabase.from("categories").select("id, label, emoji, sort_order, enabled")
+    supabase.from("categories").select("id, label, emoji, img, sort_order, enabled")
       .order("sort_order", { ascending: true })
       .then(({ data }) => setDbCategories(data || []));
   }, []);
@@ -1742,7 +1742,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         id:    c.id,
         label: c.label,
         emoji: c.emoji || "🍽️",
-        img:   CATEGORIES.find(hc => hc.id === c.id)?.img || null, // reuse hardcoded img if available
+        img:   c.img || CATEGORIES.find(hc => hc.id === c.id)?.img || null,
       }));
   })();
 
