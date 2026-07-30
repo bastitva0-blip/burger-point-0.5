@@ -576,6 +576,19 @@ export default function RiderApp() {
   const login  = (r) => { setRider(r); setAvailability(r.availability); };
   const logout = () => { localStorage.removeItem(LS_RIDER); setRider(null); setOrders([]); };
 
+  // ── Validate stored session on mount ─────────────────────
+  useEffect(() => {
+    const stored = (() => { try { return JSON.parse(localStorage.getItem(LS_RIDER)); } catch { return null; } })();
+    if (!stored?.rider_id || !SUPABASE_READY) return;
+    // Silently verify the rider still exists in DB
+    supabase.from("riders").select("rider_id, full_name, availability").eq("rider_id", stored.rider_id).single()
+      .then(({ data, error }) => {
+        if (error || !data) { localStorage.removeItem(LS_RIDER); setRider(null); }
+        else { const updated = { ...stored, ...data }; localStorage.setItem(LS_RIDER, JSON.stringify(updated)); setRider(updated); }
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const fetchOrders = useCallback(async () => {
     if (!rider || !SUPABASE_READY) return;
     setLoading(true);

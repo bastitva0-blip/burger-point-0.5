@@ -498,15 +498,24 @@ export async function printKOT(order) {
 //  ADMIN LOGIN SCREEN
 // ─────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
+  const [email, setEmail]     = useState(import.meta.env.VITE_ADMIN_EMAIL || "");
   const [pwd, setPwd]         = useState("");
   const [show, setShow]       = useState(false);
   const [err, setErr]         = useState("");
-  const loading = false;
+  const [loading, setLoading] = useState(false);
 
-  const login = () => {
-    if (!pwd.trim()) { setErr("Enter your password."); return; }
-    if (pwd === ADMIN_PASSWORD) onLogin();
-    else setErr("Incorrect password.");
+  const login = async () => {
+    if (!email.trim() || !pwd.trim()) { setErr("Enter email and password."); return; }
+    if (!SUPABASE_READY) { setErr("Supabase not configured."); return; }
+    setLoading(true); setErr("");
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pwd });
+      if (error) { setErr(error.message || "Login failed. Check your credentials."); }
+      else onLogin();
+    } catch (e) {
+      setErr("Something went wrong. Please try again.");
+    }
+    setLoading(false);
   };
 
   return (
@@ -519,12 +528,22 @@ function LoginScreen({ onLogin }) {
         </div>
         <div className="space-y-3">
           <div>
+            <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Email</label>
+            <input type="email" value={email}
+              onChange={e => { setEmail(e.target.value); setErr(""); }}
+              onKeyDown={e => e.key === "Enter" && login()}
+              placeholder="admin@burgerpoint.co.in"
+              autoComplete="email"
+              className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-4 py-3 outline-none text-stone-700" />
+          </div>
+          <div>
             <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Password</label>
             <div className="relative">
               <input type={show ? "text" : "password"} value={pwd}
                 onChange={e => { setPwd(e.target.value); setErr(""); }}
                 onKeyDown={e => e.key === "Enter" && login()}
                 placeholder="••••••••"
+                autoComplete="current-password"
                 className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-4 py-3 outline-none text-stone-700 pr-10" />
               <button onClick={() => setShow(s => !s)} aria-label="Toggle password visibility" className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400">
                 {show ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -3415,7 +3434,18 @@ export default function AdminApp() {
     if (!error && data) { setOrders(normaliseAll(data)); setOnline(true); } else setOnline(false);
   }, [normaliseAll]);
 
-  useEffect(() => { setCheckingSession(false); }, []);
+  // ── Supabase Auth session ──────────────────────────────
+  useEffect(() => {
+    if (!SUPABASE_READY) { setCheckingSession(false); return; }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setAuthed(!!session);
+      setCheckingSession(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthed(!!session);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (!authed || !SUPABASE_READY) return;
@@ -3566,7 +3596,7 @@ export default function AdminApp() {
     setAssignModal(null);
   };
 
-  const logout = () => { setAuthed(false); };
+  const logout = async () => { await supabase.auth.signOut(); setAuthed(false); };
 
   if (checkingSession) return (
     <div className="bg-gradient-to-br from-stone-900 to-stone-800 flex items-center justify-center" style={{minHeight:"100dvh"}}>
