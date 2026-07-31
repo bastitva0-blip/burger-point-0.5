@@ -583,8 +583,16 @@ export default function RiderApp() {
     // Silently verify the rider still exists in DB
     supabase.from("riders").select("rider_id, full_name, availability").eq("rider_id", stored.rider_id).single()
       .then(({ data, error }) => {
-        if (error || !data) { localStorage.removeItem(LS_RIDER); setRider(null); }
-        else { const updated = { ...stored, ...data }; localStorage.setItem(LS_RIDER, JSON.stringify(updated)); setRider(updated); }
+        if (error?.code === "PGRST116") {
+          // Rider genuinely doesn't exist in DB — safe to clear session
+          localStorage.removeItem(LS_RIDER); setRider(null);
+        } else if (!error && data) {
+          // Success — refresh cached rider data from DB
+          const updated = { ...stored, ...data }; localStorage.setItem(LS_RIDER, JSON.stringify(updated)); setRider(updated);
+        }
+        // Any other error (network timeout, RLS policy mismatch, offline, slow mobile)
+        // → do nothing: keep the localStorage session and the rider state already
+        //   set by the useState() initializer. The dashboard stays visible.
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
