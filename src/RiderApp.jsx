@@ -517,7 +517,7 @@ function LoginScreen({ onLogin }) {
   };
 
   return (
-    <div className="bg-gradient-to-br from-stone-900 to-stone-800 flex items-center justify-center p-4" style={{ minHeight: "100vh", minHeight: "-webkit-fill-available" }}>
+    <div className="bg-gradient-to-br from-stone-900 to-stone-800 flex items-center justify-center p-4 flex-1 w-full" style={{ minHeight: "100vh", minHeight: "-webkit-fill-available" }}>
       <div
         className="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl"
         style={{
@@ -682,7 +682,7 @@ export default function RiderApp() {
   const availCfg = AVAIL_CFG[availability] || AVAIL_CFG.Available;
 
   return (
-    <div className="bg-stone-50 flex flex-col max-w-lg mx-auto" style={{ height: "100vh", minHeight: "-webkit-fill-available" }}>
+    <div className="bg-stone-50 flex flex-col flex-1 max-w-lg mx-auto w-full" style={{ minHeight: 0 }}>
       {/* Top bar */}
       <div className="flex-shrink-0 bg-white border-b border-stone-100 shadow-sm">
         <div className="px-4 py-3 flex items-center justify-between">
