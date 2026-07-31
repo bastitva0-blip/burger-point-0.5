@@ -4,10 +4,27 @@
 
 * { -webkit-tap-highlight-color: transparent; }
 
+/* ── Mobile full-height fix ───────────────────────────── */
+/* iOS Safari / Android WebView need the full chain to have height */
+html {
+  height: 100%;
+  height: -webkit-fill-available;
+}
+
 body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   background: #fff8f0;
   overflow-x: hidden;
+  min-height: 100%;
+  min-height: -webkit-fill-available;
+}
+
+#root {
+  height: 100%;
+  min-height: 100%;
+  min-height: -webkit-fill-available;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Hide scrollbar but keep scroll */
