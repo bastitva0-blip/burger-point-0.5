@@ -46,9 +46,10 @@ function playRiderChime() {
 
 // ── Notification hook for new assignments ─────────────────
 function useRiderNotifications(riderId, currentOrders, authed) {
-  const prevIdsRef  = useRef(new Set());
-  const repeatRef   = useRef(null);
-  const flashRef    = useRef(null);
+  const prevIdsRef      = useRef(new Set());
+  const isFirstLoadRef  = useRef(true);
+  const repeatRef       = useRef(null);
+  const flashRef        = useRef(null);
   const [popup, setPopup]       = useState(null);
   const [unread, setUnread]     = useState(0);
   const unackedRef              = useRef(new Set());
@@ -75,6 +76,15 @@ function useRiderNotifications(riderId, currentOrders, authed) {
 
   useEffect(() => {
     const assigned = currentOrders.filter(o => o.rider_status === "assigned");
+
+    // On first load after login, seed prevIds without notifying —
+    // orders already assigned before login are not "new"
+    if (isFirstLoadRef.current) {
+      prevIdsRef.current = new Set(assigned.map(o => o.id));
+      isFirstLoadRef.current = false;
+      return;
+    }
+
     const newOnes  = assigned.filter(o => !prevIdsRef.current.has(o.id));
 
     if (newOnes.length > 0) {
@@ -583,16 +593,8 @@ export default function RiderApp() {
     // Silently verify the rider still exists in DB
     supabase.from("riders").select("rider_id, full_name, availability").eq("rider_id", stored.rider_id).single()
       .then(({ data, error }) => {
-        if (error?.code === "PGRST116") {
-          // Rider genuinely doesn't exist in DB — safe to clear session
-          localStorage.removeItem(LS_RIDER); setRider(null);
-        } else if (!error && data) {
-          // Success — refresh cached rider data from DB
-          const updated = { ...stored, ...data }; localStorage.setItem(LS_RIDER, JSON.stringify(updated)); setRider(updated);
-        }
-        // Any other error (network timeout, RLS policy mismatch, offline, slow mobile)
-        // → do nothing: keep the localStorage session and the rider state already
-        //   set by the useState() initializer. The dashboard stays visible.
+        if (error || !data) { localStorage.removeItem(LS_RIDER); setRider(null); }
+        else { const updated = { ...stored, ...data }; localStorage.setItem(LS_RIDER, JSON.stringify(updated)); setRider(updated); }
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
