@@ -343,6 +343,96 @@ function HomeTab({ rider, orders, onAction, onRefresh, loading, earningPerKm }) 
   );
 }
 
+// ── History Order Row — tap to expand full order details ──
+function HistoryOrderRow({ order, earningPerKm }) {
+  const [open, setOpen] = useState(false);
+  const km     = Number(order.delivery_distance_km || 0);
+  const earned = km > 0 ? Math.round(km * earningPerKm) : null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-100 overflow-hidden">
+      {/* Summary row — always visible, tap anywhere to expand */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full text-left px-4 py-3 flex items-center justify-between active:bg-stone-50 transition-colors">
+        <div className="flex-1 min-w-0">
+          <p className="font-bold text-stone-800 text-sm">{order.customer_name || "Customer"}</p>
+          <p className="text-xs text-stone-400 mt-0.5">{order.delivered_at ? fmt(order.delivered_at) : "—"}</p>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0 ml-3">
+          <div className="text-right">
+            <p className="font-black text-orange-600 text-sm">{currency(order.total)}</p>
+            {earned !== null
+              ? <p className="text-xs font-bold text-green-600">₹{earned} earned</p>
+              : <p className="text-xs text-stone-400">Dist. unknown</p>}
+          </div>
+          {open ? <ChevronUp size={14} className="text-stone-300" /> : <ChevronDown size={14} className="text-stone-300" />}
+        </div>
+      </button>
+
+      {/* Expanded details — full order info, stacks vertically */}
+      {open && (
+        <div className="border-t border-stone-100 px-4 pb-4 pt-3 space-y-3">
+
+          {/* Address */}
+          <div className="flex items-start gap-2">
+            <span className="text-base mt-0.5">📍</span>
+            <p className="text-sm text-stone-600">{order.delivery_address || "—"}</p>
+          </div>
+
+          {/* Distance + payment */}
+          <div className="flex gap-3">
+            {km > 0 && (
+              <span className="text-xs bg-blue-50 text-blue-600 font-bold px-3 py-1 rounded-full">
+                📏 {km.toFixed(1)} km
+              </span>
+            )}
+            <span className="text-xs bg-stone-100 text-stone-500 font-bold px-3 py-1 rounded-full">
+              {order.payment_method || "Cash"}
+            </span>
+            <span className="text-xs bg-green-100 text-green-700 font-bold px-3 py-1 rounded-full">✓ Delivered</span>
+          </div>
+
+          {/* Items */}
+          <div className="bg-stone-50 rounded-xl p-3">
+            <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Items</p>
+            {(order.items || []).map((it, i) => (
+              <div key={i} className="flex justify-between text-sm py-1">
+                <span className="text-stone-700">
+                  {it.name}{it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×{it.qty}
+                  {it.addonLabels?.length > 0 && (
+                    <span className="text-[11px] text-orange-400 ml-1">({it.addonLabels.join(", ")})</span>
+                  )}
+                </span>
+                <span className="font-bold text-stone-600">{currency(it.finalPrice * it.qty)}</span>
+              </div>
+            ))}
+            <div className="flex justify-between font-black text-sm pt-2 border-t border-stone-200 mt-1">
+              <span>Total</span>
+              <span className="text-orange-600">{currency(order.total)}</span>
+            </div>
+          </div>
+
+          {/* Note */}
+          {order.note && (
+            <div className="bg-yellow-50 rounded-xl px-3 py-2">
+              <p className="text-xs text-stone-500 italic">📝 "{order.note}"</p>
+            </div>
+          )}
+
+          {/* Earnings callout */}
+          {earned !== null && (
+            <div className="bg-green-50 rounded-xl px-3 py-2.5 flex items-center justify-between">
+              <p className="text-xs font-bold text-green-700">Your earnings</p>
+              <p className="font-black text-green-600">₹{earned}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Account Tab — merged History + Profile ───────────────
 function AccountTab({ rider, orders, availability, onAvailChange, onLogout, earningPerKm }) {
   const [section, setSection] = useState("history"); // "history" | "profile"
@@ -435,29 +525,7 @@ function AccountTab({ rider, orders, availability, onAvailChange, onLogout, earn
                 <p className="text-xs opacity-70 mt-0.5">₹{earningPerKm}/km × distance · {filtered.length} deliveries</p>
               </div>
               <div className="space-y-2">
-                {filtered.map(o => {
-                  const km = Number(o.delivery_distance_km || 0);
-                  const earned = km > 0 ? Math.round(km * earningPerKm) : null;
-                  return (
-                    <div key={o.id} className="bg-white rounded-2xl border border-stone-100 px-4 py-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-bold text-stone-800 text-sm">{o.customer_name || "Customer"}</p>
-                          <p className="text-xs text-stone-400 mt-0.5">{o.delivered_at ? fmt(o.delivered_at) : "—"}</p>
-                          <p className="text-xs text-stone-400 truncate mt-0.5">📍 {o.delivery_address || "—"}</p>
-                          {km > 0 && <p className="text-xs text-blue-500 mt-0.5">📏 {km.toFixed(1)} km</p>}
-                        </div>
-                        <div className="text-right flex-shrink-0 ml-3">
-                          <p className="font-black text-orange-600">{currency(o.total)}</p>
-                          {earned !== null
-                            ? <p className="text-xs font-bold text-green-600 mt-0.5">You earned ₹{earned}</p>
-                            : <p className="text-xs text-stone-400 mt-0.5">Dist. unknown</p>}
-                          <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✓ Done</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {filtered.map(o => <HistoryOrderRow key={o.id} order={o} earningPerKm={earningPerKm} />)}
               </div>
             </>
           )}
