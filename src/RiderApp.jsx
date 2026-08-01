@@ -772,7 +772,7 @@ export default function RiderApp() {
   const availCfg = AVAIL_CFG[availability] || AVAIL_CFG.Available;
 
   return (
-    <div className="bg-stone-50 flex flex-col flex-1 max-w-lg mx-auto w-full" style={{ minHeight: 0 }}>
+    <div className="bg-stone-50 flex flex-col max-w-lg mx-auto w-full" style={{ height: "100dvh" }}>
       {/* Top bar */}
       <div className="flex-shrink-0 bg-white border-b border-stone-100 shadow-sm">
         <div className="px-4 py-3 flex items-center justify-between">
@@ -814,7 +814,7 @@ export default function RiderApp() {
       </div>
 
       {/* Content — simple tab switch, no AnimatePresence (causes blank on mobile) */}
-      <div className="flex-1 overflow-y-auto pb-6 overscroll-contain">
+      <div className="flex-1 min-h-0 overflow-y-auto pb-6 overscroll-contain" style={{ WebkitOverflowScrolling: "touch" }}>
         {tab === "home"    && <HomeTab rider={rider} orders={orders} onAction={advanceOrder} onRefresh={fetchOrders} loading={loading} earningPerKm={earningPerKm} />}
         {tab === "account" && <AccountTab rider={rider} orders={orders} availability={availability} onAvailChange={changeAvailability} onLogout={logout} earningPerKm={earningPerKm} />}
       </div>
