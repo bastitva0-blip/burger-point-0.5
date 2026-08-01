@@ -7,7 +7,7 @@ import {
   Home, Clock, User, MapPin, Phone, Package,
   CheckCircle, Navigation2, LogOut, RefreshCw,
   Search, Eye, EyeOff, Wifi, WifiOff, Bell,
-  ChevronRight, TrendingUp, IndianRupee, Lock,
+  ChevronDown, ChevronUp, TrendingUp, IndianRupee, Lock,
 } from "lucide-react";
 import { supabase } from "./supabase.js";
 import { SUPABASE_READY } from "./constants.js";
@@ -187,48 +187,51 @@ function OrderCard({ order, onAction, actionLabel, actionColor, actionDisabled }
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden mb-3">
-      {/* Header — always-visible call button lives here, no need to expand first */}
-      <div className="flex items-center gap-3 px-4 py-3">
-        <div className="text-2xl cursor-pointer" onClick={() => setOpen(o => !o)}>{cfg.icon}</div>
-        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setOpen(o => !o)}>
-          <div className="flex items-center gap-2">
-            <p className="font-bold text-stone-800 truncate text-sm">{order.customer_name || "Customer"}</p>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${cfg.color}`}>
-              {cfg.label}
-            </span>
+
+      {/* Always-visible summary row */}
+      <div className="px-4 pt-3 pb-2">
+        <div className="flex items-start gap-3">
+          <span className="text-2xl mt-0.5">{cfg.icon}</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-bold text-stone-800 text-sm">{order.customer_name || "Customer"}</p>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${cfg.color}`}>{cfg.label}</span>
+            </div>
+            <p className="text-xs text-stone-400 mt-0.5">📍 {order.delivery_address || "—"}</p>
+            <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+              <span className="text-xs font-black text-orange-600">{currency(order.total)}</span>
+              <span className="text-xs text-stone-400">{order.payment_method || "Cash"}</span>
+            </div>
           </div>
-          <p className="text-xs text-stone-400 mt-0.5 truncate">📍 {order.delivery_address || "—"}</p>
-          <div className="flex items-center gap-3 mt-0.5">
-            <span className="text-xs font-black text-orange-600">{currency(order.total)}</span>
-            <span className="text-xs text-stone-400">{order.payment_method || "Cash"}</span>
-          </div>
+          {order.customer_phone && (
+            <a href={`tel:${order.customer_phone}`}
+              className="flex-shrink-0 w-11 h-11 flex items-center justify-center bg-green-500 text-white rounded-xl active:scale-95 transition-transform">
+              <Phone size={16} />
+            </a>
+          )}
         </div>
-        {order.customer_phone && (
-          <a href={`tel:${order.customer_phone}`} onClick={e => e.stopPropagation()}
-            className="flex-shrink-0 w-11 h-11 flex items-center justify-center bg-green-500 text-white rounded-xl active:scale-95 transition-transform">
-            <Phone size={16} />
-          </a>
-        )}
-        <ChevronRight size={16} onClick={() => setOpen(o => !o)}
-          className={`text-stone-300 transition-transform cursor-pointer flex-shrink-0 ${open ? "rotate-90" : ""}`} />
+
+        {/* Expand toggle — full-width tap target, clearly labelled */}
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-stone-50 text-stone-400 text-xs font-bold active:bg-stone-100 transition-colors">
+          {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          {open ? "Hide details" : "View order details"}
+        </button>
       </div>
 
-      {/* Expanded — CSS max-height transition instead of AnimatePresence/height:auto */}
-      <div
-        style={{
-          maxHeight: open ? "600px" : "0px",
-          opacity: open ? 1 : 0,
-          overflow: "hidden",
-          transition: "max-height 0.2s ease-out, opacity 0.15s ease-out",
-        }}>
-        <div className="px-4 pb-4 border-t border-stone-50 pt-3 space-y-3">
-
+      {/* Inline expanded details — stacks vertically, no horizontal movement */}
+      {open && (
+        <div className="px-4 pb-3 border-t border-stone-50 pt-3 space-y-3">
           {/* Items */}
           <div className="bg-stone-50 rounded-xl p-3">
             <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Items</p>
             {(order.items || []).map((it, i) => (
               <div key={i} className="flex justify-between text-sm py-1">
-                <span className="text-stone-700">{it.name}{it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×{it.qty}</span>
+                <span className="text-stone-700">
+                  {it.name}{it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×{it.qty}
+                  {it.addonLabels?.length > 0 && <span className="text-[11px] text-orange-400 ml-1">({it.addonLabels.join(", ")})</span>}
+                </span>
                 <span className="font-bold text-stone-600">{currency(it.finalPrice * it.qty)}</span>
               </div>
             ))}
@@ -237,6 +240,7 @@ function OrderCard({ order, onAction, actionLabel, actionColor, actionDisabled }
             </div>
           </div>
 
+          {/* Navigate */}
           <button onClick={navigate}
             className="w-full flex items-center justify-center gap-2 bg-blue-500 text-white font-bold py-3 rounded-xl text-sm active:scale-95 transition-transform">
             <Navigation2 size={15} /> Navigate
@@ -249,11 +253,11 @@ function OrderCard({ order, onAction, actionLabel, actionColor, actionDisabled }
             </div>
           )}
         </div>
-      </div>
+      )}
 
-      {/* Action button — sticky at the bottom of the card, always reachable */}
+      {/* Action button */}
       {actionLabel && (
-        <div className="sticky bottom-0 px-4 pb-4 pt-2 bg-white border-t border-stone-50">
+        <div className="px-4 pb-4 pt-2 bg-white border-t border-stone-50">
           <button onClick={() => onAction(order.id)} disabled={actionDisabled}
             className={`w-full py-4 rounded-2xl font-black text-base text-white shadow-md active:scale-95 transition-transform disabled:opacity-50 ${actionColor || "bg-gradient-to-r from-orange-500 to-red-500"}`}>
             {actionLabel}
@@ -339,12 +343,19 @@ function HomeTab({ rider, orders, onAction, onRefresh, loading, earningPerKm }) 
   );
 }
 
-// ── History Tab ───────────────────────────────────────────
-function HistoryTab({ orders, earningPerKm }) {
-  const [search, setSearch] = useState("");
+// ── Account Tab — merged History + Profile ───────────────
+function AccountTab({ rider, orders, availability, onAvailChange, onLogout, earningPerKm }) {
+  const [section, setSection] = useState("history"); // "history" | "profile"
+  const [search, setSearch]   = useState("");
   const [dateFilter, setDateFilter] = useState("");
+  const [showPwd, setShowPwd]   = useState(false);
+  const [oldPwd, setOldPwd]     = useState("");
+  const [newPwd, setNewPwd]     = useState("");
+  const [pwdMsg, setPwdMsg]     = useState("");
+  const [pwdLoading, setPwdLoading] = useState(false);
+
   const delivered = orders.filter(o => o.rider_status === "delivered").sort((a, b) => new Date(b.delivered_at) - new Date(a.delivered_at));
-  const filtered = delivered.filter(o => {
+  const filtered  = delivered.filter(o => {
     const matchSearch = !search || (o.customer_name || "").toLowerCase().includes(search.toLowerCase()) || (o.customer_phone || "").includes(search);
     const matchDate   = !dateFilter || (o.delivered_at || "").slice(0, 10) === dateFilter;
     return matchSearch && matchDate;
@@ -354,79 +365,14 @@ function HistoryTab({ orders, earningPerKm }) {
     return s + (km > 0 ? km * earningPerKm : 0);
   }, 0);
 
-  return (
-    <div className="px-4 py-4">
-      <div className="flex gap-2 mb-4">
-        <div className="flex-1 flex items-center gap-2 bg-stone-100 rounded-xl px-3 py-2.5">
-          <Search size={13} className="text-stone-400 flex-shrink-0" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customer…"
-            className="flex-1 bg-transparent text-sm outline-none text-stone-700" />
-        </div>
-        <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)}
-          className="text-xs border-2 border-stone-200 rounded-xl px-2 outline-none text-stone-600" />
-      </div>
-
-      {filtered.length === 0 ? (
-        <div className="text-center py-16">
-          <p className="text-4xl mb-3">📦</p>
-          <p className="text-stone-400 text-sm">No deliveries found</p>
-        </div>
-      ) : (
-        <>
-          {/* Earnings summary for filtered period */}
-          <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-4 mb-4 text-white">
-            <p className="text-xs font-bold opacity-80">{dateFilter ? "Earnings for selected date" : "Total Earnings Shown"}</p>
-            <p className="text-2xl font-black mt-1">₹{Math.round(totalEarned)}</p>
-            <p className="text-xs opacity-70 mt-0.5">₹{earningPerKm}/km × distance · {filtered.length} deliveries</p>
-          </div>
-          <div className="space-y-2">
-          {filtered.map(o => {
-            const km = Number(o.delivery_distance_km || 0);
-            const earned = km > 0 ? Math.round(km * earningPerKm) : null;
-            return (
-              <div key={o.id} className="bg-white rounded-2xl border border-stone-100 px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-bold text-stone-800 text-sm">{o.customer_name || "Customer"}</p>
-                    <p className="text-xs text-stone-400 mt-0.5">{o.delivered_at ? fmt(o.delivered_at) : "—"}</p>
-                    <p className="text-xs text-stone-400 truncate mt-0.5">📍 {o.delivery_address || "—"}</p>
-                    {km > 0 && <p className="text-xs text-blue-500 mt-0.5">📏 {km.toFixed(1)} km</p>}
-                  </div>
-                  <div className="text-right flex-shrink-0 ml-3">
-                    <p className="font-black text-orange-600">{currency(o.total)}</p>
-                    {earned !== null
-                      ? <p className="text-xs font-bold text-green-600 mt-0.5">You earned ₹{earned}</p>
-                      : <p className="text-xs text-stone-400 mt-0.5">Dist. unknown</p>}
-                    <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✓ Done</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── Profile Tab ───────────────────────────────────────────
-function ProfileTab({ rider, orders, availability, onAvailChange, onLogout }) {
-  const [showPwd, setShowPwd]   = useState(false);
-  const [oldPwd, setOldPwd]     = useState("");
-  const [newPwd, setNewPwd]     = useState("");
-  const [pwdMsg, setPwdMsg]     = useState("");
-  const [pwdLoading, setPwdLoading] = useState(false);
-
-  const totalDeliveries = orders.filter(o => o.rider_status === "delivered").length;
+  const totalDeliveries = delivered.length;
   const today = new Date().toISOString().split("T")[0];
-  const todayDeliveries = orders.filter(o => o.rider_status === "delivered" && o.delivered_at?.slice(0, 10) === today).length;
+  const todayDeliveries = delivered.filter(o => o.delivered_at?.slice(0, 10) === today).length;
 
   const changePwd = async () => {
     if (!oldPwd || !newPwd) { setPwdMsg("Fill both fields."); return; }
     if (newPwd.length < 6)  { setPwdMsg("New password min 6 chars."); return; }
     setPwdLoading(true); setPwdMsg("");
-    // Verify old password first
     const { data } = await supabase.rpc("verify_rider_login", { p_rider_id: rider.rider_id, p_password: oldPwd });
     if (!data?.success) { setPwdMsg("Old password incorrect."); setPwdLoading(false); return; }
     const { data: ok } = await supabase.rpc("reset_rider_password", { p_rider_id: rider.rider_id, p_new_password: newPwd });
@@ -436,69 +382,133 @@ function ProfileTab({ rider, orders, availability, onAvailChange, onLogout }) {
   };
 
   return (
-    <div className="px-4 py-4 space-y-4">
-      {/* Rider card */}
-      <div className="bg-gradient-to-br from-orange-500 to-red-600 rounded-3xl p-5 text-white">
-        <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center text-3xl mb-3">🛵</div>
-        <p className="font-black text-xl">{rider.full_name}</p>
-        <p className="text-orange-100 text-sm">{rider.phone_number}</p>
-        <p className="text-orange-200 text-xs mt-1">ID: {rider.rider_id}</p>
+    <div className="px-4 py-4">
+      {/* Rider summary — always visible at top of account tab */}
+      <div className="bg-gradient-to-br from-orange-500 to-red-600 rounded-3xl p-4 text-white mb-4 flex items-center gap-4">
+        <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center text-2xl flex-shrink-0">🛵</div>
+        <div className="flex-1 min-w-0">
+          <p className="font-black text-lg leading-tight truncate">{rider.full_name}</p>
+          <p className="text-orange-100 text-sm">{rider.phone_number}</p>
+          <p className="text-orange-200 text-xs">ID: {rider.rider_id}</p>
+        </div>
+        <div className="flex-shrink-0 text-right">
+          <p className="font-black text-2xl">{totalDeliveries}</p>
+          <p className="text-orange-100 text-xs">total</p>
+          <p className="font-black text-lg">{todayDeliveries}</p>
+          <p className="text-orange-200 text-xs">today</p>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-3">
-        {[
-          { label: "Total Deliveries", val: totalDeliveries, icon: "📦" },
-          { label: "Today",            val: todayDeliveries, icon: "🗓️" },
-        ].map(s => (
-          <div key={s.label} className="bg-white rounded-2xl border border-stone-100 p-4 text-center">
-            <p className="text-2xl mb-1">{s.icon}</p>
-            <p className="font-black text-2xl text-stone-800">{s.val}</p>
-            <p className="text-xs text-stone-400">{s.label}</p>
-          </div>
+      {/* Section toggle */}
+      <div className="flex bg-stone-100 rounded-2xl p-1 mb-4">
+        {[{ id: "history", label: "📦 History" }, { id: "profile", label: "⚙️ Settings" }].map(s => (
+          <button key={s.id} onClick={() => setSection(s.id)}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${section === s.id ? "bg-white text-stone-800 shadow-sm" : "text-stone-400"}`}>
+            {s.label}
+          </button>
         ))}
       </div>
 
-      {/* Availability */}
-      <div className="bg-white rounded-2xl border border-stone-100 p-4">
-        <p className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-3">My Availability</p>
-        <div className="flex gap-2">
-          {["Available", "Busy", "Offline"].map(a => (
-            <button key={a} onClick={() => {
-              if (a === "Offline" && !window.confirm("Go offline? You won't receive new deliveries.")) return;
-              onAvailChange(a);
-            }}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${availability === a ? AVAIL_CFG[a].color + " text-white" : "bg-stone-100 text-stone-500"}`}>
-              {a}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* ── History section ── */}
+      {section === "history" && (
+        <div>
+          <div className="flex gap-2 mb-4">
+            <div className="flex-1 flex items-center gap-2 bg-stone-100 rounded-xl px-3 py-2.5">
+              <Search size={13} className="text-stone-400 flex-shrink-0" />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customer…"
+                className="flex-1 bg-transparent text-sm outline-none text-stone-700" />
+            </div>
+            <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)}
+              className="text-xs border-2 border-stone-200 rounded-xl px-2 outline-none text-stone-600" />
+          </div>
 
-      {/* Change password */}
-      <div className="bg-white rounded-2xl border border-stone-100 p-4">
-        <p className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-3">Change Password</p>
-        <div className="space-y-2">
-          <input type="password" value={oldPwd} onChange={e => setOldPwd(e.target.value)}
-            placeholder="Current password"
-            className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-2.5 outline-none" />
-          <input type="password" value={newPwd} onChange={e => setNewPwd(e.target.value)}
-            placeholder="New password (min 6 chars)"
-            className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-2.5 outline-none" />
-          {pwdMsg && <p className={`text-xs ${pwdMsg.startsWith("✅") ? "text-green-600" : "text-red-500"}`}>{pwdMsg}</p>}
-          <button onClick={changePwd} disabled={pwdLoading}
-            className="w-full bg-stone-800 text-white font-bold py-3 rounded-xl text-sm disabled:opacity-50">
-            {pwdLoading ? "Updating…" : "Update Password"}
+          {filtered.length === 0 ? (
+            <div className="text-center py-16">
+              <p className="text-4xl mb-3">📦</p>
+              <p className="text-stone-400 text-sm">No deliveries found</p>
+            </div>
+          ) : (
+            <>
+              <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-4 mb-4 text-white">
+                <p className="text-xs font-bold opacity-80">{dateFilter ? "Earnings for selected date" : "Total Earnings Shown"}</p>
+                <p className="text-2xl font-black mt-1">₹{Math.round(totalEarned)}</p>
+                <p className="text-xs opacity-70 mt-0.5">₹{earningPerKm}/km × distance · {filtered.length} deliveries</p>
+              </div>
+              <div className="space-y-2">
+                {filtered.map(o => {
+                  const km = Number(o.delivery_distance_km || 0);
+                  const earned = km > 0 ? Math.round(km * earningPerKm) : null;
+                  return (
+                    <div key={o.id} className="bg-white rounded-2xl border border-stone-100 px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-stone-800 text-sm">{o.customer_name || "Customer"}</p>
+                          <p className="text-xs text-stone-400 mt-0.5">{o.delivered_at ? fmt(o.delivered_at) : "—"}</p>
+                          <p className="text-xs text-stone-400 truncate mt-0.5">📍 {o.delivery_address || "—"}</p>
+                          {km > 0 && <p className="text-xs text-blue-500 mt-0.5">📏 {km.toFixed(1)} km</p>}
+                        </div>
+                        <div className="text-right flex-shrink-0 ml-3">
+                          <p className="font-black text-orange-600">{currency(o.total)}</p>
+                          {earned !== null
+                            ? <p className="text-xs font-bold text-green-600 mt-0.5">You earned ₹{earned}</p>
+                            : <p className="text-xs text-stone-400 mt-0.5">Dist. unknown</p>}
+                          <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✓ Done</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Settings section ── */}
+      {section === "profile" && (
+        <div className="space-y-4">
+          {/* Availability */}
+          <div className="bg-white rounded-2xl border border-stone-100 p-4">
+            <p className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-3">My Availability</p>
+            <div className="flex gap-2">
+              {["Available", "Busy", "Offline"].map(a => (
+                <button key={a} onClick={() => {
+                  if (a === "Offline" && !window.confirm("Go offline? You won't receive new deliveries.")) return;
+                  onAvailChange(a);
+                }}
+                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${availability === a ? AVAIL_CFG[a].color + " text-white" : "bg-stone-100 text-stone-500"}`}>
+                  {a}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Change password */}
+          <div className="bg-white rounded-2xl border border-stone-100 p-4">
+            <p className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-3">Change Password</p>
+            <div className="space-y-2">
+              <input type="password" value={oldPwd} onChange={e => setOldPwd(e.target.value)}
+                placeholder="Current password"
+                className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-2.5 outline-none" />
+              <input type="password" value={newPwd} onChange={e => setNewPwd(e.target.value)}
+                placeholder="New password (min 6 chars)"
+                className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-2.5 outline-none" />
+              {pwdMsg && <p className={`text-xs ${pwdMsg.startsWith("✅") ? "text-green-600" : "text-red-500"}`}>{pwdMsg}</p>}
+              <button onClick={changePwd} disabled={pwdLoading}
+                className="w-full bg-stone-800 text-white font-bold py-3 rounded-xl text-sm disabled:opacity-50">
+                {pwdLoading ? "Updating…" : "Update Password"}
+              </button>
+            </div>
+          </div>
+
+          {/* Logout */}
+          <button onClick={onLogout}
+            className="w-full flex items-center justify-center gap-2 border-2 border-red-200 text-red-500 font-bold py-4 rounded-2xl text-sm">
+            <LogOut size={16} /> Logout
           </button>
+          <div className="h-4" />
         </div>
-      </div>
-
-      {/* Logout */}
-      <button onClick={onLogout}
-        className="w-full flex items-center justify-center gap-2 border-2 border-red-200 text-red-500 font-bold py-4 rounded-2xl text-sm">
-        <LogOut size={16} /> Logout
-      </button>
-      <div className="h-4" />
+      )}
     </div>
   );
 }
@@ -688,8 +698,7 @@ export default function RiderApp() {
 
   const tabs = [
     { id: "home",    icon: <Home size={18} />,      label: "Home" },
-    { id: "history", icon: <Clock size={18} />,     label: "History" },
-    { id: "profile", icon: <User size={18} />,      label: "Profile" },
+    { id: "account", icon: <User size={18} />,      label: "Account" },
   ];
 
   const availCfg = AVAIL_CFG[availability] || AVAIL_CFG.Available;
@@ -739,8 +748,7 @@ export default function RiderApp() {
       {/* Content — simple tab switch, no AnimatePresence (causes blank on mobile) */}
       <div className="flex-1 overflow-y-auto pb-6 overscroll-contain">
         {tab === "home"    && <HomeTab rider={rider} orders={orders} onAction={advanceOrder} onRefresh={fetchOrders} loading={loading} earningPerKm={earningPerKm} />}
-        {tab === "history" && <HistoryTab orders={orders} earningPerKm={earningPerKm} />}
-        {tab === "profile" && <ProfileTab rider={rider} orders={orders} availability={availability} onAvailChange={changeAvailability} onLogout={logout} earningPerKm={earningPerKm} />}
+        {tab === "account" && <AccountTab rider={rider} orders={orders} availability={availability} onAvailChange={changeAvailability} onLogout={logout} earningPerKm={earningPerKm} />}
       </div>
 
       {/* New order popup */}
