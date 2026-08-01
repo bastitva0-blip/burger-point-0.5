@@ -641,7 +641,10 @@ export default function RiderApp() {
     if (!next) return;
 
     const payload = { rider_status: next };
-    if (next === "picked_up") payload.picked_up_at = new Date().toISOString();
+    if (next === "picked_up") {
+      payload.picked_up_at = new Date().toISOString();
+      payload.status = "dispatched"; // order status advances when rider physically picks up
+    }
     if (next === "delivered") {
       payload.delivered_at = new Date().toISOString();
       payload.status = "served"; // update main order status
