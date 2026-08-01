@@ -564,6 +564,94 @@ function LoginScreen({ onLogin }) {
 // ─────────────────────────────────────────────────────────
 //  ORDER CARD
 // ─────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────
+//  RIDER FALLBACK CONTROLS
+//  Admin override when rider hasn't updated their status.
+//  Shown inside OrderCard for delivery orders with an assigned rider.
+// ─────────────────────────────────────────────────────────
+const RIDER_STATUS_STEPS = [
+  { rider_status: "assigned",   order_status: null,         label: "Assigned" },
+  { rider_status: "accepted",   order_status: null,         label: "Rider Accepted" },
+  { rider_status: "picked_up",  order_status: "dispatched", label: "Picked Up / Dispatched" },
+  { rider_status: "delivered",  order_status: "served",     label: "Delivered" },
+];
+
+function RiderFallbackControls({ order, onAdvance }) {
+  const [expanded, setExpanded] = useState(false);
+  const [confirming, setConfirming] = useState(null); // step label being confirmed
+  const currentIdx = RIDER_STATUS_STEPS.findIndex(s => s.rider_status === order.rider_status);
+
+  // Nothing to override if already at last step
+  if (currentIdx >= RIDER_STATUS_STEPS.length - 1) return null;
+
+  const next = RIDER_STATUS_STEPS[currentIdx + 1];
+  const remaining = RIDER_STATUS_STEPS.slice(currentIdx + 1);
+
+  async function applyOverride(step) {
+    setConfirming(null);
+    setExpanded(false);
+    if (!SUPABASE_READY) return;
+
+    const payload = { rider_status: step.rider_status };
+    if (step.rider_status === "picked_up") payload.picked_up_at = new Date().toISOString();
+    if (step.rider_status === "delivered") payload.delivered_at = new Date().toISOString();
+    if (step.order_status) payload.status = step.order_status;
+
+    const { error } = await supabase.from("orders").update(payload).eq("id", order.id);
+    if (error) {
+      console.error("[rider-fallback] update failed:", error);
+      return;
+    }
+    // Let the realtime subscription pick it up; also call onAdvance for
+    // the order status part so the optimistic update fires immediately.
+    if (step.order_status) onAdvance(order.id, step.order_status, { rider_status: step.rider_status, ...payload });
+  }
+
+  return (
+    <div className="mt-2 border border-dashed border-purple-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-bold text-purple-600 bg-purple-50 active:bg-purple-100">
+        <span>🛵 Rider Override {expanded ? "▲" : "▼"}</span>
+        <span className="font-normal text-purple-400">
+          Current: {RIDER_STATUS_STEPS[currentIdx]?.label ?? "Not set"}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="px-3 py-2 bg-white flex flex-col gap-1.5">
+          <p className="text-[10px] text-stone-400 mb-1">
+            Rider hasn't updated? Manually advance their status.
+          </p>
+          {remaining.map(step => (
+            confirming === step.label ? (
+              <div key={step.rider_status} className="flex gap-2">
+                <button
+                  onClick={() => applyOverride(step)}
+                  className="flex-1 py-2 rounded-lg text-[11px] font-bold bg-purple-500 text-white active:scale-95 transition-transform">
+                  Confirm: {step.label}
+                </button>
+                <button
+                  onClick={() => setConfirming(null)}
+                  className="px-3 py-2 rounded-lg text-[11px] font-bold border border-stone-200 text-stone-500">
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <button
+                key={step.rider_status}
+                onClick={() => setConfirming(step.label)}
+                className="w-full py-2 rounded-lg text-[11px] font-bold border border-purple-200 text-purple-700 bg-purple-50 active:scale-95 transition-transform hover:bg-purple-100">
+                Mark as: {step.label}
+              </button>
+            )
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPrintKOT, onPrintInvoice }) {
   const [open, setOpen] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
@@ -685,6 +773,13 @@ https://maps.google.com/?q=${order.customer_lat},${order.customer_lng}`
               className="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white py-2.5 rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-transform">
               {ns.next === "accepted" ? "✅ Accept & Print KOT 🍳" : ns.label}
             </button>
+          )}
+
+          {/* Rider fallback — admin can manually advance rider/order status
+              when rider hasn't updated. Only shown for delivery orders with
+              an assigned rider that aren't terminal yet. */}
+          {order.order_type === "delivery" && order.rider_id && !isTerminal && (
+            <RiderFallbackControls order={order} onAdvance={onAdvance} />
           )}
 
           {/* Cancelled banner — shown instead of action buttons */}
@@ -3249,6 +3344,7 @@ function NewOrderPopup({ order, count, onAck }) {
 // ─────────────────────────────────────────────────────────
 function useOrderNotifications(orders, authed) {
   const prevIdsRef      = useRef(new Set());
+  const isFirstLoadRef  = useRef(true);
   const unackedRef      = useRef(new Set());
   const repeatRef       = useRef(null);
   const flashRef        = useRef(null);
@@ -3329,6 +3425,15 @@ function useOrderNotifications(orders, authed) {
 
   useEffect(() => {
     const pending = orders.filter(o => o.status === "pending");
+
+    // On first load, seed prevIds without notifying — orders already
+    // pending before admin logged in are not "new" to this session.
+    if (isFirstLoadRef.current) {
+      prevIdsRef.current = new Set(pending.map(o => o.id));
+      isFirstLoadRef.current = false;
+      return;
+    }
+
     const newOrders = pending.filter(o => !prevIdsRef.current.has(o.id));
 
     if (newOrders.length > 0) {
@@ -3582,13 +3687,31 @@ export default function AdminApp() {
     const order = orders.find(o => o.id === orderId);
     const routeData = order ? await generateRoute(order) : null;
 
-    await updateStatus(orderId, "dispatched", {
+    // Only attach rider fields — do NOT advance to "dispatched" here.
+    // "dispatched" fires when the rider physically picks up the order
+    // and marks it in RiderApp. Admin assigning = rider_status "assigned",
+    // order status stays as-is (typically "ready").
+    const { error } = await supabase.from("orders").update({
       rider_name:   rider.full_name,
       rider_phone:  rider.phone_number,
       rider_id:     rider.rider_id,
       rider_status: "assigned",
       ...(routeData || {}),
-    });
+    }).eq("id", orderId);
+
+    if (error) {
+      console.error("handleAssign error:", error);
+      toast.error("⚠️ Rider assignment failed — check connection.");
+      return;
+    }
+
+    // Optimistic update in local state (mirrors what Supabase just wrote)
+    setOrders(prev => prev.map(o =>
+      o.id === orderId
+        ? { ...o, rider_name: rider.full_name, rider_phone: rider.phone_number, rider_id: rider.rider_id, rider_status: "assigned", ...(routeData || {}) }
+        : o
+    ));
+
     // Mark rider as Busy
     const { error: riderErr } = await supabase.from("riders").update({ availability: "Busy", updated_at: new Date().toISOString() }).eq("rider_id", rider.rider_id);
     if (riderErr) console.warn("Rider availability update failed:", riderErr.message);
