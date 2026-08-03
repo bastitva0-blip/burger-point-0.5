@@ -1713,7 +1713,7 @@ function MenuTab() {
     const fileName = `menu/${Date.now()}_${baseName}.jpg`;
     const { data, error } = await supabase.storage
       .from("menu-images")
-      .upload(fileName, file, { contentType: "image/jpeg", upsert: true });
+      .upload(fileName, file, { contentType: "image/jpeg", upsert: true, cacheControl: "31536000" });
 
     if (error) {
       setFormErr(`Upload failed: ${error.message}`);
@@ -2471,7 +2471,7 @@ function CategoriesSection() {
     const fileName = `categories/${Date.now()}_${baseName}.jpg`;
     const { data, error } = await supabase.storage
       .from("menu-images")
-      .upload(fileName, file, { contentType: "image/jpeg", upsert: true });
+      .upload(fileName, file, { contentType: "image/jpeg", upsert: true, cacheControl: "31536000" });
 
     if (error) {
       toast.error(`Upload failed: ${error.message}`);
