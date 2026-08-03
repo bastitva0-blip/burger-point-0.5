@@ -1674,9 +1674,9 @@ function AddonBuilder({ addons, onChange }) {
 //  MENU MANAGEMENT TAB
 // ─────────────────────────────────────────────────────────
 // ── Image compression helper ─────────────────────────────
-// Resizes to max 600px wide and compresses to 80% JPEG quality before upload.
-// Reduces typical food photo from ~500KB down to ~60-80KB with no visible quality loss.
-function compressImage(file, maxWidth = 600, quality = 0.8) {
+// Resizes to max 400px wide and compresses to 65% JPEG quality before upload.
+// Reduces typical food photo from ~500KB down to ~15-20KB — plenty for a menu thumbnail.
+function compressImage(file, maxWidth = 400, quality = 0.65) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
@@ -1731,7 +1731,7 @@ function MenuTab() {
 
     setUploadingImg(true);
     setFormErr("");
-    // Compress before upload: resize to max 600px wide, 80% JPEG quality
+    // Compress before upload: resize to max 400px wide, 65% JPEG quality
     let uploadFile = file;
     try { uploadFile = await compressImage(file); } catch { /* fall back to original if compression fails */ }
     // Fix: strip existing extension before building filename to avoid double-extension (e.g. photo.jpg.jpg)
@@ -2493,7 +2493,7 @@ function CategoriesSection() {
     }
 
     setUploadingImg(true);
-    // Compress before upload: resize to max 600px wide, 80% JPEG quality
+    // Compress before upload: resize to max 400px wide, 65% JPEG quality
     let uploadFile = file;
     try { uploadFile = await compressImage(file); } catch { /* fall back to original if compression fails */ }
     const baseName = file.name.replace(/\.[^.]+$/, "").replace(/[^a-z0-9]/gi, "_");
