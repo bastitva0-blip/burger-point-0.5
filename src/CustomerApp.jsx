@@ -265,6 +265,7 @@ function ItemModal({ item, onClose, onAdd }) {
 
 // ── CART DRAWER ───────────────────────────────────────────
 function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null, supabaseDown = false, menu = {}, bestsellers = new Set(), onAddSuggested }) {
+  const comboSuggestions = useComboSuggestions(cart, menu);
   const [note, setNote]           = useState("");
   const [promoCode, setPromoCode] = useState("");
   const [promo, setPromo]         = useState(null);
@@ -469,6 +470,32 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
               Minimum order is ₹{settings.min_order_value} — add ₹{settings.min_order_value - subtotal} more to continue.
             </div>
           )}
+          {/* 🎉 Super Saver Combo Suggestions */}
+          {comboSuggestions.length > 0 && (
+            <div className="mt-3 mb-2">
+              <p className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-2">🎉 Super Saver!</p>
+              <div className="space-y-2">
+                {comboSuggestions.map(({ combo }) => (
+                  <div key={combo.id} className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-3 flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-green-100">
+                      <ItemThumb item={combo} className="w-full h-full rounded-none object-cover" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-black text-green-700 mb-0.5">Better Value Combo</p>
+                      <p className="text-xs font-bold text-stone-800 leading-tight">{combo.name}</p>
+                      {combo.description && <p className="text-[9px] text-stone-500 mt-0.5 line-clamp-1">{combo.description}</p>}
+                      <p className="text-sm font-black text-green-600 mt-0.5">₹{combo.price}</p>
+                    </div>
+                    <button onClick={() => onAddSuggested && onAddSuggested(combo)}
+                      className="flex-shrink-0 bg-green-500 text-white font-black text-xs px-3 py-2 rounded-xl active:scale-95 transition-all shadow-sm">
+                      ADD
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 🛒 People Also Ordered */}
           {(() => {
             const cartIds = new Set(cart.map(c => c.id));
@@ -1342,6 +1369,63 @@ function OrderHistoryModal({ onClose, onReorder, onShareReceipt }) {
   );
 }
 
+// ── COMBO UPSELL MAP ─────────────────────────────────────
+// Maps item name keywords to combo IDs so we can suggest combos when cart matches
+const COMBO_MAP = [
+  {
+    comboId: "8867014d-8f23-4caf-8ad7-8f955e2649ab", // Aloo Tikki Burger Combo ₹134
+    keywords: ["Aloo Tikki Burger", "French Fries", "Cold Drink"],
+  },
+  {
+    comboId: "3d1e388f-8c56-499c-8985-182f3be7f351", // Mega Munch ₹249
+    keywords: ["Supreme Tikki Burger", "French Fries", "Cold Coffee"],
+  },
+  {
+    comboId: "38c9cae6-6a94-405a-9dfd-d68edde9cb7f", // Pizza Combo ₹205
+    keywords: ["Margherita Pizza", "French Fries", "Cold Drink"],
+  },
+  {
+    comboId: "3a58c87a-35ba-48dc-883f-2287451f990d", // Coffee & Sandwich Combo ₹143
+    keywords: ["Hot Coffee", "Veg Cheese Sandwich"],
+  },
+  {
+    comboId: "be7a3e78-0169-452f-8b33-da1d457d5328", // Burger + Pizza Mega Combo ₹314
+    keywords: ["Supreme Tikki Burger", "Margherita Pizza", "French Fries"],
+  },
+  {
+    comboId: "8e7ca558-3848-4786-9a9d-0c8b08460c31", // Snack Attack Platter ₹299
+    keywords: ["Veg Noodles", "Chilli Potato", "Spring Roll", "Veg Momo"],
+  },
+  {
+    comboId: "6c9951fc-b8f4-4679-b862-fb6251f9a218", // Triple Treat ₹269
+    keywords: ["Veg Maggi", "Oreo Shake", "Peri Peri Fries"],
+  },
+];
+
+function useComboSuggestions(cart, menu) {
+  return useMemo(() => {
+    if (!cart || cart.length === 0) return [];
+    const allItems = Object.values(menu).flat();
+    const cartNames = cart.map(c => c.name.toLowerCase());
+    const suggestions = [];
+    for (const { comboId, keywords } of COMBO_MAP) {
+      const matchCount = keywords.filter(kw =>
+        cartNames.some(n => n.includes(kw.toLowerCase()))
+      ).length;
+      if (matchCount >= 1) {
+        const comboItem = allItems.find(i => i.id === comboId);
+        if (comboItem && !cart.some(c => c.id === comboId)) {
+          // Calculate how much customer would save
+          const cartTotal = cart.reduce((s, c) => s + c.finalPrice * c.qty, 0);
+          suggestions.push({ combo: comboItem, matchCount, cartTotal });
+        }
+      }
+    }
+    // Sort by match count descending
+    return suggestions.sort((a, b) => b.matchCount - a.matchCount).slice(0, 2);
+  }, [cart, menu]);
+}
+
 // ── TODAY'S SPECIAL HOOK ─────────────────────────────────
 // Picks one item per day from bestsellers, rotating daily.
 // Same item shows all day for consistency.
@@ -1737,13 +1821,29 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const [showFavs,      setShowFavs]      = useState(false);
   const catBarRef      = useRef(null);
   const menuAreaRef    = useRef(null);
+  const lastScrollY    = useRef(0);
   const catSectionRefs = useRef({});
+
+  // Collapse bestseller section on scroll down, expand on scroll up
+  useEffect(() => {
+    const el = menuAreaRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const y = el.scrollTop;
+      if (y > lastScrollY.current + 40) { setBsCollapsed(true); }
+      else if (y < lastScrollY.current - 20) { setBsCollapsed(false); }
+      lastScrollY.current = y;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
   const [menuLoaded,   setMenuLoaded]   = useState(false);
   const [cartBouncing, setCartBouncing] = useState(false);
   const toast = useToast();
 
   const bestsellers = useBestsellers(menu);
   const todaySpecial = useTodaySpecial(menu, bestsellers);
+  const [bsCollapsed, setBsCollapsed] = useState(false);
   const { banner: pushBanner, allow: pushAllow, dismiss: pushDismiss } = usePushSubscription();
 
   // Feature 8: real-time cart unavailability
@@ -2257,30 +2357,49 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           </div>
         )}
 
-        {/* 🔥 Bestsellers — full dedicated section */}
+        {/* 🔥 Bestsellers — collapses to strip on scroll down */}
         {!menuLoaded ? null : bestsellers.size > 0 && !search && !showFavs ? (
-          <div className="px-3 pt-2 pb-1">
-            <div className="flex items-center justify-between mb-2">
+          <div className="px-3 pt-2 pb-1 transition-all duration-300">
+            <div className="flex items-center justify-between mb-2 cursor-pointer" onClick={() => setBsCollapsed(c => !c)}>
               <div className="flex items-center gap-1.5">
                 <span className="text-sm">🔥</span>
                 <p className="text-sm font-black text-stone-800">Bestsellers</p>
               </div>
-              <p className="text-[10px] text-stone-400 font-semibold">Most ordered</p>
+              <span className="text-[10px] text-stone-400 font-semibold">{bsCollapsed ? "▼ Show" : "▲ Hide"}</span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.values(menu).flat().filter(i => bestsellers.has(i.id) && i.is_available !== false).slice(0, 6).map(item => (
-                <button key={item.id} onClick={() => setItemModal(item)}
-                  className="bg-white border border-stone-100 rounded-2xl p-2 flex items-center gap-2 shadow-sm active:scale-[0.97] transition-all text-left">
-                  <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
-                    <ItemThumb item={item} className="w-full h-full rounded-none object-cover" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[11px] font-bold text-stone-800 leading-tight line-clamp-2">{item.name}</p>
-                    <p className="text-[11px] font-black text-orange-600 mt-0.5">₹{item.price}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
+            {bsCollapsed ? (
+              /* Collapsed: compact horizontal strip */
+              <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+                {Object.values(menu).flat().filter(i => bestsellers.has(i.id) && i.is_available !== false).slice(0, 8).map(item => (
+                  <button key={item.id} onClick={() => setItemModal(item)}
+                    className="flex-shrink-0 flex items-center gap-1.5 bg-orange-50 border border-orange-100 rounded-xl px-2 py-1.5 active:scale-95 transition-transform">
+                    <div className="w-7 h-7 rounded-lg overflow-hidden flex-shrink-0 bg-stone-200">
+                      <ItemThumb item={item} className="w-full h-full rounded-none" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-stone-800 whitespace-nowrap max-w-[70px] truncate">{item.name}</p>
+                      <p className="text-[9px] font-black text-orange-600">₹{item.price}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              /* Expanded: 2-column grid */
+              <div className="grid grid-cols-2 gap-2">
+                {Object.values(menu).flat().filter(i => bestsellers.has(i.id) && i.is_available !== false).slice(0, 6).map(item => (
+                  <button key={item.id} onClick={() => setItemModal(item)}
+                    className="bg-white border border-stone-100 rounded-2xl p-2 flex items-center gap-2 shadow-sm active:scale-[0.97] transition-all text-left">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
+                      <ItemThumb item={item} className="w-full h-full rounded-none object-cover" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-bold text-stone-800 leading-tight line-clamp-2">{item.name}</p>
+                      <p className="text-[11px] font-black text-orange-600 mt-0.5">₹{item.price}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : null}
 
