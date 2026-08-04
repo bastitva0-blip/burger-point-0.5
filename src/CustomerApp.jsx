@@ -398,6 +398,65 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
               className="w-full text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-2xl p-3 resize-none h-16 outline-none focus:border-orange-400 transition-colors" />
           </div>
 
+          {/* 🎉 Super Saver Combo Suggestions */}
+          {comboSuggestions.length > 0 && (
+            <div className="mt-3 mb-2">
+              <p className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-2">🎉 Super Saver!</p>
+              <div className="space-y-2">
+                {comboSuggestions.map(({ combo }) => (
+                  <div key={combo.id} className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-3 flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-green-100">
+                      <ItemThumb item={combo} className="w-full h-full rounded-none object-cover" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-black text-green-700 mb-0.5">Better Value Combo</p>
+                      <p className="text-xs font-bold text-stone-800 leading-tight">{combo.name}</p>
+                      {combo.description && <p className="text-[9px] text-stone-500 mt-0.5 line-clamp-1">{combo.description}</p>}
+                      <p className="text-sm font-black text-green-600 mt-0.5">₹{combo.price}</p>
+                    </div>
+                    <button onClick={() => onAddSuggested && onAddSuggested(combo)}
+                      className="flex-shrink-0 bg-green-500 text-white font-black text-xs px-3 py-2 rounded-xl active:scale-95 transition-all shadow-sm">
+                      ADD
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 🛒 People Also Ordered */}
+          {(() => {
+            const cartIds = new Set(cart.map(c => c.id));
+            const allItems = Object.values(menu).flat();
+            const cartCats = new Set(cart.map(c => allItems.find(i => i.id === c.id)?.category).filter(Boolean));
+            const suggestions = allItems.filter(i =>
+              bestsellers.has(i.id) &&
+              !cartIds.has(i.id) &&
+              i.is_available !== false &&
+              (cartCats.has(i.category) || cartCats.size === 0)
+            ).slice(0, 4);
+            if (suggestions.length === 0) return null;
+            return (
+              <div className="mt-3 mb-3">
+                <p className="text-[10px] font-black text-stone-500 uppercase tracking-widest mb-2">🛒 People Also Ordered</p>
+                <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+                  {suggestions.map(item => (
+                    <button key={item.id} onClick={() => onAddSuggested && onAddSuggested(item)}
+                      className="flex-shrink-0 bg-orange-50 border border-orange-100 rounded-2xl p-2 flex items-center gap-2 active:scale-95 transition-all min-w-[140px]">
+                      <div className="w-10 h-10 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
+                        <ItemThumb item={item} className="w-full h-full rounded-none object-cover" />
+                      </div>
+                      <div className="flex-1 min-w-0 text-left">
+                        <p className="text-[10px] font-bold text-stone-800 leading-tight line-clamp-2">{item.name}</p>
+                        <p className="text-[10px] font-black text-orange-600 mt-0.5">+ ₹{item.price}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Promo code */}
           <div className="mt-4">
             <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2 flex items-center gap-1"><Tag size={10} /> Promo Code</p>
@@ -470,65 +529,6 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
               Minimum order is ₹{settings.min_order_value} — add ₹{settings.min_order_value - subtotal} more to continue.
             </div>
           )}
-          {/* 🎉 Super Saver Combo Suggestions */}
-          {comboSuggestions.length > 0 && (
-            <div className="mt-3 mb-2">
-              <p className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-2">🎉 Super Saver!</p>
-              <div className="space-y-2">
-                {comboSuggestions.map(({ combo }) => (
-                  <div key={combo.id} className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-3 flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-green-100">
-                      <ItemThumb item={combo} className="w-full h-full rounded-none object-cover" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[10px] font-black text-green-700 mb-0.5">Better Value Combo</p>
-                      <p className="text-xs font-bold text-stone-800 leading-tight">{combo.name}</p>
-                      {combo.description && <p className="text-[9px] text-stone-500 mt-0.5 line-clamp-1">{combo.description}</p>}
-                      <p className="text-sm font-black text-green-600 mt-0.5">₹{combo.price}</p>
-                    </div>
-                    <button onClick={() => onAddSuggested && onAddSuggested(combo)}
-                      className="flex-shrink-0 bg-green-500 text-white font-black text-xs px-3 py-2 rounded-xl active:scale-95 transition-all shadow-sm">
-                      ADD
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 🛒 People Also Ordered */}
-          {(() => {
-            const cartIds = new Set(cart.map(c => c.id));
-            const allItems = Object.values(menu).flat();
-            // Suggest bestsellers not already in cart, from same categories as cart items
-            const cartCats = new Set(cart.map(c => allItems.find(i => i.id === c.id)?.category).filter(Boolean));
-            const suggestions = allItems.filter(i =>
-              bestsellers.has(i.id) &&
-              !cartIds.has(i.id) &&
-              i.is_available !== false &&
-              (cartCats.has(i.category) || cartCats.size === 0)
-            ).slice(0, 4);
-            if (suggestions.length === 0) return null;
-            return (
-              <div className="mt-3 mb-1">
-                <p className="text-[10px] font-black text-stone-500 uppercase tracking-widest mb-2">🛒 People Also Ordered</p>
-                <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
-                  {suggestions.map(item => (
-                    <button key={item.id} onClick={() => onAddSuggested && onAddSuggested(item)}
-                      className="flex-shrink-0 bg-orange-50 border border-orange-100 rounded-2xl p-2 flex items-center gap-2 active:scale-95 transition-all min-w-[140px]">
-                      <div className="w-10 h-10 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
-                        <ItemThumb item={item} className="w-full h-full rounded-none object-cover" />
-                      </div>
-                      <div className="flex-1 min-w-0 text-left">
-                        <p className="text-[10px] font-bold text-stone-800 leading-tight line-clamp-2">{item.name}</p>
-                        <p className="text-[10px] font-black text-orange-600 mt-0.5">+ ₹{item.price}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
           <div className="h-4" />
         </div>
 
