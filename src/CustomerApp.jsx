@@ -264,7 +264,7 @@ function ItemModal({ item, onClose, onAdd }) {
 }
 
 // ── CART DRAWER ───────────────────────────────────────────
-function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null, supabaseDown = false }) {
+function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null, supabaseDown = false, menu = {}, bestsellers = new Set(), onAddSuggested }) {
   const [note, setNote]           = useState("");
   const [promoCode, setPromoCode] = useState("");
   const [promo, setPromo]         = useState(null);
@@ -469,6 +469,39 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
               Minimum order is ₹{settings.min_order_value} — add ₹{settings.min_order_value - subtotal} more to continue.
             </div>
           )}
+          {/* 🛒 People Also Ordered */}
+          {(() => {
+            const cartIds = new Set(cart.map(c => c.id));
+            const allItems = Object.values(menu).flat();
+            // Suggest bestsellers not already in cart, from same categories as cart items
+            const cartCats = new Set(cart.map(c => allItems.find(i => i.id === c.id)?.category).filter(Boolean));
+            const suggestions = allItems.filter(i =>
+              bestsellers.has(i.id) &&
+              !cartIds.has(i.id) &&
+              i.is_available !== false &&
+              (cartCats.has(i.category) || cartCats.size === 0)
+            ).slice(0, 4);
+            if (suggestions.length === 0) return null;
+            return (
+              <div className="mt-3 mb-1">
+                <p className="text-[10px] font-black text-stone-500 uppercase tracking-widest mb-2">🛒 People Also Ordered</p>
+                <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+                  {suggestions.map(item => (
+                    <button key={item.id} onClick={() => onAddSuggested && onAddSuggested(item)}
+                      className="flex-shrink-0 bg-orange-50 border border-orange-100 rounded-2xl p-2 flex items-center gap-2 active:scale-95 transition-all min-w-[140px]">
+                      <div className="w-10 h-10 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
+                        <ItemThumb item={item} className="w-full h-full rounded-none object-cover" />
+                      </div>
+                      <div className="flex-1 min-w-0 text-left">
+                        <p className="text-[10px] font-bold text-stone-800 leading-tight line-clamp-2">{item.name}</p>
+                        <p className="text-[10px] font-black text-orange-600 mt-0.5">+ ₹{item.price}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           <div className="h-4" />
         </div>
 
@@ -1309,6 +1342,21 @@ function OrderHistoryModal({ onClose, onReorder, onShareReceipt }) {
   );
 }
 
+// ── TODAY'S SPECIAL HOOK ─────────────────────────────────
+// Picks one item per day from bestsellers, rotating daily.
+// Same item shows all day for consistency.
+function useTodaySpecial(menu, bestsellers) {
+  return React.useMemo(() => {
+    const all = Object.values(menu).flat();
+    const bsItems = all.filter(i => bestsellers.has(i.id) && i.is_available !== false);
+    if (bsItems.length === 0) return null;
+    // Use day-of-year as seed so it changes daily but stays same all day
+    const now = new Date();
+    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86_400_000);
+    return bsItems[dayOfYear % bsItems.length];
+  }, [menu, bestsellers]);
+}
+
 // ── BESTSELLERS HOOK ──────────────────────────────────────
 function useBestsellers(menu) {
   const [bestsellers, setBestsellers] = useState(() => {
@@ -1695,6 +1743,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const toast = useToast();
 
   const bestsellers = useBestsellers(menu);
+  const todaySpecial = useTodaySpecial(menu, bestsellers);
   const { banner: pushBanner, allow: pushAllow, dismiss: pushDismiss } = usePushSubscription();
 
   // Feature 8: real-time cart unavailability
@@ -2187,23 +2236,47 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           </div>
         </div>
 
-        {/* 🔥 Bestsellers — compact horizontal strip */}
-        {!menuLoaded ? null : bestsellers.size > 0 && !search && !showFavs ? (
-          <div className="px-3 pt-1.5 pb-1">
-            <div className="flex gap-2 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
-              <div className="flex-shrink-0 flex items-center gap-1 pr-1">
-                <span className="text-xs">🔥</span>
-                <p className="text-[10px] font-black text-stone-600 whitespace-nowrap">Best</p>
+        {/* ✨ Today's Special */}
+        {!menuLoaded ? null : todaySpecial && !search && !showFavs && (
+          <div className="px-3 pt-2 pb-1">
+            <div className="bg-gradient-to-r from-orange-500 to-red-500 rounded-2xl p-3 flex items-center gap-3 shadow-sm">
+              <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-orange-400">
+                <ItemThumb item={todaySpecial} className="w-full h-full rounded-none object-cover" />
               </div>
-              {Object.values(menu).flat().filter(i => bestsellers.has(i.id)).slice(0, 8).map(item => (
-                <button key={item.id} onClick={() => handleAdd(item)}
-                  className="flex-shrink-0 flex items-center gap-1.5 bg-orange-50 border border-orange-100 rounded-xl px-2 py-1 active:scale-95 transition-transform">
-                  <div className="w-6 h-6 rounded-lg overflow-hidden flex-shrink-0 bg-stone-200">
-                    <ItemThumb item={item} className="w-full h-full rounded-none" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[9px] font-black text-orange-100 uppercase tracking-widest mb-0.5">⚡ Today's Special</p>
+                <p className="text-sm font-black text-white leading-tight truncate">{todaySpecial.name}</p>
+                {todaySpecial.description && <p className="text-[10px] text-orange-100 mt-0.5 line-clamp-1">{todaySpecial.description}</p>}
+                <p className="text-base font-black text-white mt-1">₹{todaySpecial.price}</p>
+              </div>
+              <button onClick={() => { setItemModal(todaySpecial); }}
+                className="flex-shrink-0 bg-white text-orange-600 font-black text-xs px-3 py-2 rounded-xl active:scale-95 transition-all shadow-sm">
+                ADD
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 🔥 Bestsellers — full dedicated section */}
+        {!menuLoaded ? null : bestsellers.size > 0 && !search && !showFavs ? (
+          <div className="px-3 pt-2 pb-1">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm">🔥</span>
+                <p className="text-sm font-black text-stone-800">Bestsellers</p>
+              </div>
+              <p className="text-[10px] text-stone-400 font-semibold">Most ordered</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.values(menu).flat().filter(i => bestsellers.has(i.id) && i.is_available !== false).slice(0, 6).map(item => (
+                <button key={item.id} onClick={() => setItemModal(item)}
+                  className="bg-white border border-stone-100 rounded-2xl p-2 flex items-center gap-2 shadow-sm active:scale-[0.97] transition-all text-left">
+                  <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
+                    <ItemThumb item={item} className="w-full h-full rounded-none object-cover" />
                   </div>
-                  <div>
-                    <p className="text-[10px] font-bold text-stone-800 whitespace-nowrap max-w-[70px] truncate">{item.name}</p>
-                    <p className="text-[9px] font-black text-orange-600">₹{item.price}</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-bold text-stone-800 leading-tight line-clamp-2">{item.name}</p>
+                    <p className="text-[11px] font-black text-orange-600 mt-0.5">₹{item.price}</p>
                   </div>
                 </button>
               ))}
@@ -2338,7 +2411,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       {showCart && (
         <CartDrawer cart={cart} tableLabel={tableLabel} orderType={orderType} customerInfo={customerInfo} settings={bizSettings}
           onClose={() => setShowCart(false)} onQty={handleQty} onRemove={i => { setCart(p => p.filter((_, x) => x !== i)); setCartValidationError(null); }} onPlace={handlePlaceAttempt}
-          unavailableIds={unavailableCartIds} validationError={cartValidationError} supabaseDown={supabaseDown} />
+          unavailableIds={unavailableCartIds} validationError={cartValidationError} supabaseDown={supabaseDown}
+          menu={menu} bestsellers={bestsellers} onAddSuggested={(item) => { handleAdd(item); }} />
       )}
       {showRazorpay && (
         <RazorpayModal amount={showRazorpay.total} customerName={customerInfo?.name || tableLabel || "Customer"} customerPhone={customerInfo?.phone}
