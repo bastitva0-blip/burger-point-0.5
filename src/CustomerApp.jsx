@@ -722,6 +722,267 @@ function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess
   );
 }
 
+// ── MINI GAMES (shown while order is preparing) ───────────
+
+function SnakeGame() {
+  const COLS = 16, ROWS = 16, CELL = 18;
+  const dirs = { UP: [0,-1], DOWN: [0,1], LEFT: [-1,0], RIGHT: [1,0] };
+  const [snake, setSnake]   = useState([[8,8],[7,8],[6,8]]);
+  const [food,  setFood]    = useState([12,5]);
+  const [dir,   setDir]     = useState("RIGHT");
+  const [score, setScore]   = useState(0);
+  const [best,  setBest]    = useState(() => +localStorage.getItem("bp_snake_best") || 0);
+  const [dead,  setDead]    = useState(false);
+  const [started, setStarted] = useState(false);
+  const nextDir = useRef("RIGHT");
+  const gameRef = useRef(null);
+
+  const randFood = (sn) => {
+    let f;
+    do { f = [Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS)]; }
+    while (sn.some(([x,y]) => x===f[0] && y===f[1]));
+    return f;
+  };
+
+  const reset = () => {
+    const s = [[8,8],[7,8],[6,8]];
+    setSnake(s); setFood(randFood(s)); setDir("RIGHT"); setScore(0); setDead(false); setStarted(true);
+    nextDir.current = "RIGHT";
+    gameRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!started || dead) return;
+    const speed = Math.max(80, 160 - score * 4);
+    const t = setInterval(() => {
+      setSnake(prev => {
+        const d = dirs[nextDir.current];
+        setDir(nextDir.current);
+        const head = [(prev[0][0] + d[0] + COLS) % COLS, (prev[0][1] + d[1] + ROWS) % ROWS];
+        if (prev.some(([x,y]) => x===head[0] && y===head[1])) {
+          setDead(true);
+          setScore(sc => { const ns = sc; setBest(b => { const nb=Math.max(b,ns); localStorage.setItem("bp_snake_best",nb); return nb; }); return sc; });
+          return prev;
+        }
+        setFood(f => {
+          if (head[0]===f[0] && head[1]===f[1]) {
+            setScore(s => s+1);
+            const grown = [head, ...prev];
+            const nf = randFood(grown);
+            setTimeout(() => setFood(nf), 0);
+            return nf;
+          }
+          return f;
+        });
+        return [head, ...prev.slice(0,-1)];
+      });
+    }, speed);
+    return () => clearInterval(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [started, dead, score]);
+
+  const handleKey = useCallback((e) => {
+    const map = { ArrowUp:"UP", ArrowDown:"DOWN", ArrowLeft:"LEFT", ArrowRight:"RIGHT",
+                  w:"UP", s:"DOWN", a:"LEFT", d:"RIGHT" };
+    const nd = map[e.key];
+    if (!nd) return;
+    e.preventDefault();
+    const opp = { UP:"DOWN", DOWN:"UP", LEFT:"RIGHT", RIGHT:"LEFT" };
+    if (nd !== opp[nextDir.current]) nextDir.current = nd;
+  }, []);
+
+  // Touch swipe
+  const touch = useRef({});
+  const onTouchStart = (e) => { touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; };
+  const onTouchEnd   = (e) => {
+    const dx = e.changedTouches[0].clientX - touch.current.x;
+    const dy = e.changedTouches[0].clientY - touch.current.y;
+    if (Math.abs(dx) > Math.abs(dy)) nextDir.current = dx > 0 ? "RIGHT" : "LEFT";
+    else nextDir.current = dy > 0 ? "DOWN" : "UP";
+  };
+
+  const W = COLS*CELL, H = ROWS*CELL;
+
+  return (
+    <div className="flex flex-col items-center gap-3" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="flex items-center justify-between w-full px-1">
+        <div className="text-xs font-bold text-white/70">Score <span className="text-orange-400 text-sm">{score}</span></div>
+        <div className="text-xs font-bold text-white/70">Best <span className="text-yellow-400 text-sm">{best}</span></div>
+      </div>
+      <div tabIndex={0} ref={gameRef} onKeyDown={handleKey}
+        className="relative rounded-2xl overflow-hidden outline-none cursor-pointer"
+        style={{ width: W, height: H, background: "#0d1117", border: "2px solid rgba(249,115,22,0.3)", touchAction:"none" }}
+        onClick={() => { if (!started || dead) reset(); }}>
+
+        {/* Grid dots */}
+        {Array.from({length:COLS}).map((_,cx) => Array.from({length:ROWS}).map((_,ry) => (
+          <div key={`${cx}-${ry}`} style={{ position:"absolute", left: cx*CELL+CELL/2-1, top: ry*CELL+CELL/2-1, width:2, height:2, borderRadius:"50%", background:"rgba(255,255,255,0.05)" }} />
+        )))}
+
+        {/* Food */}
+        <div style={{ position:"absolute", left:food[0]*CELL, top:food[1]*CELL, width:CELL, height:CELL, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, animation:"sadBounce 0.7s ease-in-out infinite" }}>🍔</div>
+
+        {/* Snake */}
+        {snake.map(([x,y], i) => (
+          <div key={i} style={{
+            position:"absolute", left:x*CELL+1, top:y*CELL+1, width:CELL-2, height:CELL-2, borderRadius: i===0?6:4,
+            background: i===0
+              ? "linear-gradient(135deg,#f97316,#ef4444)"
+              : `rgba(249,115,22,${Math.max(0.25, 1 - i*0.06)})`,
+            boxShadow: i===0 ? "0 0 8px rgba(249,115,22,0.8)" : "none",
+            transition: "none",
+          }} />
+        ))}
+
+        {/* Overlay states */}
+        {(!started || dead) && (
+          <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.75)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:8 }}>
+            {dead ? (
+              <>
+                <span style={{fontSize:36}}>💀</span>
+                <p style={{color:"#fff",fontWeight:900,fontSize:16}}>Game Over!</p>
+                <p style={{color:"rgba(255,255,255,0.6)",fontSize:12}}>Score: {score}</p>
+                <div style={{background:"linear-gradient(135deg,#f97316,#ef4444)",color:"#fff",fontWeight:800,fontSize:12,padding:"8px 20px",borderRadius:12,cursor:"pointer",marginTop:4}}>Tap to Retry</div>
+              </>
+            ) : (
+              <>
+                <span style={{fontSize:36}}>🐍</span>
+                <p style={{color:"#fff",fontWeight:900,fontSize:15}}>Snake Attack!</p>
+                <p style={{color:"rgba(255,255,255,0.5)",fontSize:11,textAlign:"center",padding:"0 16px"}}>Swipe or use arrow keys · eat the 🍔</p>
+                <div style={{background:"linear-gradient(135deg,#f97316,#ef4444)",color:"#fff",fontWeight:800,fontSize:12,padding:"8px 20px",borderRadius:12,cursor:"pointer",marginTop:4}}>Tap to Play</div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+    </div>
+  );
+}
+
+function TicTacToe() {
+  const [board, setBoard] = useState(Array(9).fill(null));
+  const [xTurn, setXTurn] = useState(true);
+  const [winner, setWinner] = useState(null);
+  const [scores, setScores] = useState({X:0,O:0,D:0});
+  const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+
+  const checkWin = (b) => {
+    for (const [a,c,d] of lines) { if (b[a] && b[a]===b[c] && b[a]===b[d]) return b[a]; }
+    return b.every(Boolean) ? "D" : null;
+  };
+
+  const aiMove = useCallback((b) => {
+    // minimax-lite: try to win, block, else random
+    for (const line of lines) {
+      const [a,c,d] = line; const vals=[b[a],b[c],b[d]];
+      if (vals.filter(v=>v==="O").length===2 && vals.includes(null)) { const i=line[vals.indexOf(null)]; const nb=[...b]; nb[i]="O"; return nb; }
+    }
+    for (const line of lines) {
+      const [a,c,d] = line; const vals=[b[a],b[c],b[d]];
+      if (vals.filter(v=>v==="X").length===2 && vals.includes(null)) { const i=line[vals.indexOf(null)]; const nb=[...b]; nb[i]="O"; return nb; }
+    }
+    if (!b[4]) { const nb=[...b]; nb[4]="O"; return nb; }
+    const empty = b.map((v,i)=>v?null:i).filter(v=>v!==null);
+    if (!empty.length) return b;
+    const nb=[...b]; nb[empty[Math.floor(Math.random()*empty.length)]]="O"; return nb;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleClick = (i) => {
+    if (!xTurn || board[i] || winner) return;
+    const nb=[...board]; nb[i]="X";
+    const w=checkWin(nb);
+    setBoard(nb); setXTurn(false);
+    if (w) { setWinner(w); setScores(s=>({...s,[w]:s[w]+1})); return; }
+    setTimeout(()=>{
+      const ab=aiMove(nb); const aw=checkWin(ab);
+      setBoard(ab); setXTurn(true);
+      if (aw) { setWinner(aw); setScores(s=>({...s,[aw]:s[aw]+1})); }
+    }, 350);
+  };
+
+  const reset = () => { setBoard(Array(9).fill(null)); setXTurn(true); setWinner(null); };
+
+  const winLine = winner && winner!=="D" ? lines.find(([a,c,d])=>board[a]&&board[a]===board[c]&&board[a]===board[d]) : null;
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div className="flex gap-6 text-sm font-bold">
+        <span className="text-orange-400">You (X): {scores.X}</span>
+        <span className="text-white/30">Draws: {scores.D}</span>
+        <span className="text-purple-400">AI (O): {scores.O}</span>
+      </div>
+      <div className="grid gap-2" style={{gridTemplateColumns:"repeat(3,72px)"}}>
+        {board.map((v,i) => {
+          const isWin = winLine?.includes(i);
+          return (
+            <button key={i} onClick={()=>handleClick(i)}
+              className="h-[72px] rounded-2xl flex items-center justify-center text-3xl font-black transition-all active:scale-90"
+              style={{
+                background: isWin ? "linear-gradient(135deg,#f97316,#ef4444)" : "rgba(255,255,255,0.07)",
+                border: `2px solid ${isWin?"rgba(249,115,22,0.8)":"rgba(255,255,255,0.12)"}`,
+                color: v==="X"?"#fb923c":v==="O"?"#a78bfa":"transparent",
+                boxShadow: isWin?"0 0 16px rgba(249,115,22,0.5)":"none",
+                cursor: v||winner?"default":"pointer",
+              }}>
+              {v || "·"}
+            </button>
+          );
+        })}
+      </div>
+      {winner ? (
+        <div className="text-center">
+          <p className="font-black text-lg text-white mb-1">
+            {winner==="D"?"It's a draw! 🤝":winner==="X"?"You won! 🎉":"AI wins 🤖"}
+          </p>
+          <button onClick={reset}
+            className="text-xs font-bold text-white px-5 py-2 rounded-xl active:scale-95 transition-transform"
+            style={{background:"linear-gradient(135deg,#f97316,#ef4444)"}}>
+            Play Again
+          </button>
+        </div>
+      ) : (
+        <p className="text-xs text-white/40 font-medium">{xTurn?"Your turn — tap a square":"AI is thinking…"}</p>
+      )}
+    </div>
+  );
+}
+
+function WaitingGames() {
+  const [game, setGame] = useState(null); // null=picker, "snake", "ttt"
+  if (game === "snake") return (
+    <div>
+      <button onClick={()=>setGame(null)} className="flex items-center gap-1 text-xs text-white/40 font-bold mb-3">← Back</button>
+      <SnakeGame />
+    </div>
+  );
+  if (game === "ttt") return (
+    <div>
+      <button onClick={()=>setGame(null)} className="flex items-center gap-1 text-xs text-white/40 font-bold mb-3">← Back</button>
+      <TicTacToe />
+    </div>
+  );
+  return (
+    <div className="flex gap-3">
+      <button onClick={()=>setGame("snake")}
+        className="flex-1 py-3 rounded-2xl flex flex-col items-center gap-1.5 active:scale-95 transition-transform"
+        style={{background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,255,255,0.12)"}}>
+        <span className="text-2xl">🐍</span>
+        <span className="text-xs font-bold text-white/80">Snake</span>
+        <span className="text-[10px] text-white/40">eat the burger</span>
+      </button>
+      <button onClick={()=>setGame("ttt")}
+        className="flex-1 py-3 rounded-2xl flex flex-col items-center gap-1.5 active:scale-95 transition-transform"
+        style={{background:"rgba(255,255,255,0.07)",border:"1px solid rgba(255,255,255,0.12)"}}>
+        <span className="text-2xl">🎮</span>
+        <span className="text-xs font-bold text-white/80">Tic-Tac-Toe</span>
+        <span className="text-[10px] text-white/40">vs AI</span>
+      </button>
+    </div>
+  );
+}
+
 // ── ORDER TRACKER ─────────────────────────────────────────
 function OrderTracker({ order, tableLabel, onNewOrder }) {
   const [status,      setStatus]      = useState(order.status || "pending");
@@ -730,6 +991,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
   const [liveOrder,   setLiveOrder]   = useState(order); // tracks full order for route data
   const [reviewDone,  setReviewDone]  = useState(false);
   const [thumbSent,   setThumbSent]   = useState(null);
+  const [gamesOpen,   setGamesOpen]   = useState(true);
   // Feature 1: stale banner
   // Fix 1: stale banner; Fix 5: pending stuck; Fix 15: delivery stuck
   const [isStale,          setIsStale]          = useState(false);
@@ -1026,36 +1288,112 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     return null;
   })();
 
-  // Order was cancelled — show the reason plainly, no step tracker
+  // Order was cancelled — creative animated sorry screen
   if (status === "cancelled") {
     const reason = liveOrder.cancel_reason || order.cancel_reason;
+    const sadFoods = ["🍔","🍟","🍕","🌮","🧁","🍦","🥤","🍩"];
     return (
-      <div className="min-h-screen bg-gradient-to-br from-red-50 to-orange-50 flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-20 h-20 rounded-full bg-red-100 flex items-center justify-center text-4xl mb-4">😔</div>
-        <p className="font-black text-stone-800 text-xl mb-1">Order cancelled</p>
-        <p className="text-sm text-stone-500 max-w-xs mb-4">
-          {tableLabel || order.customer_name || "Your order"} · ₹{order.total} was cancelled by the restaurant.
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center relative overflow-hidden"
+        style={{ background: "linear-gradient(160deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%)" }}>
+
+        {/* Floating falling food emojis background */}
+        <style>{`
+          @keyframes floatDown {
+            0%   { transform: translateY(-60px) rotate(0deg); opacity: 0; }
+            10%  { opacity: 0.35; }
+            90%  { opacity: 0.35; }
+            100% { transform: translateY(110vh) rotate(360deg); opacity: 0; }
+          }
+          @keyframes sadBounce {
+            0%, 100% { transform: translateY(0) scale(1); }
+            30% { transform: translateY(-18px) scale(1.08); }
+            60% { transform: translateY(-6px) scale(0.96); }
+          }
+          @keyframes glowPulse {
+            0%, 100% { box-shadow: 0 0 30px rgba(239,68,68,0.4), 0 0 60px rgba(239,68,68,0.15); }
+            50%       { box-shadow: 0 0 50px rgba(239,68,68,0.7), 0 0 90px rgba(239,68,68,0.3); }
+          }
+          @keyframes slideUpFade {
+            from { opacity: 0; transform: translateY(28px); }
+            to   { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes wiggle {
+            0%, 100% { transform: rotate(0deg); }
+            20% { transform: rotate(-8deg); }
+            40% { transform: rotate(8deg); }
+            60% { transform: rotate(-5deg); }
+            80% { transform: rotate(5deg); }
+          }
+          .cancel-slide-1 { animation: slideUpFade 0.5s 0.1s both ease-out; }
+          .cancel-slide-2 { animation: slideUpFade 0.5s 0.3s both ease-out; }
+          .cancel-slide-3 { animation: slideUpFade 0.5s 0.5s both ease-out; }
+          .cancel-slide-4 { animation: slideUpFade 0.5s 0.7s both ease-out; }
+          .cancel-slide-5 { animation: slideUpFade 0.5s 0.9s both ease-out; }
+        `}</style>
+
+        {/* Raining food emojis */}
+        {sadFoods.map((emoji, i) => (
+          <span key={i} className="fixed text-2xl select-none pointer-events-none" style={{
+            left: `${8 + i * 12}%`,
+            top: 0,
+            animation: `floatDown ${4 + i * 0.7}s ${i * 0.6}s linear infinite`,
+          }}>{emoji}</span>
+        ))}
+
+        {/* Big glowing sad burger icon */}
+        <div className="cancel-slide-1 mb-6 relative">
+          <div className="w-28 h-28 rounded-full bg-red-500/20 border-2 border-red-400/40 flex items-center justify-center text-6xl"
+            style={{ animation: "sadBounce 2.5s ease-in-out infinite, glowPulse 2.5s ease-in-out infinite" }}>
+            🍔
+          </div>
+          <div className="absolute -bottom-1 -right-1 w-10 h-10 rounded-full bg-red-500 flex items-center justify-center text-xl border-2 border-white/10"
+            style={{ animation: "wiggle 1.8s ease-in-out infinite" }}>😢</div>
+        </div>
+
+        {/* Main copy */}
+        <div className="cancel-slide-2 mb-2">
+          <p className="text-4xl font-black text-white tracking-tight leading-tight">Aw, snap.</p>
+          <p className="text-lg font-bold text-red-300 mt-1">This one slipped away.</p>
+        </div>
+
+        <p className="cancel-slide-3 text-sm text-white/60 max-w-[260px] mb-6 leading-relaxed">
+          Your order had to be cancelled, but your next bite is just one tap away. We've saved your info — it'll be faster this time! 🚀
         </p>
+
+        {/* Reason card */}
         {reason && (
-          <div className="bg-white border border-red-200 rounded-2xl px-4 py-3 max-w-xs mb-6">
-            <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest mb-1">Reason</p>
-            <p className="text-sm text-stone-700">{reason}</p>
+          <div className="cancel-slide-3 w-full max-w-xs mb-4 rounded-2xl p-4 text-left"
+            style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)" }}>
+            <p className="text-[10px] font-bold text-red-400 uppercase tracking-widest mb-1.5">Why it happened</p>
+            <p className="text-sm text-white/80">{reason}</p>
           </div>
         )}
-        {/* Fix 6: refund notice for online payments */}
+
+        {/* Refund notice */}
         {order.payment_method && order.payment_method.toLowerCase().includes("razorpay") && (
-          <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3 max-w-xs mb-4 text-left">
-            <p className="text-xs font-bold text-blue-700 mb-1">💳 About your payment</p>
-            <p className="text-xs text-blue-600">You paid online (₹{order.total}). Your refund will be processed within 5–7 business days to your original payment method.</p>
-            {order.razorpay_payment_id && <p className="text-[10px] font-mono text-blue-500 mt-1">Ref: {order.razorpay_payment_id}</p>}
+          <div className="cancel-slide-3 w-full max-w-xs mb-5 rounded-2xl p-4 text-left"
+            style={{ background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}>
+            <p className="text-xs font-bold text-blue-300 mb-1">💳 Your money is safe</p>
+            <p className="text-xs text-blue-200/80">₹{order.total} will be refunded in 5–7 business days to your original payment method.</p>
+            {order.razorpay_payment_id && <p className="text-[10px] font-mono text-blue-400/70 mt-1">Ref: {order.razorpay_payment_id}</p>}
           </div>
         )}
-        <a href="tel:+919194008822" className="flex items-center gap-2 border border-orange-200 text-orange-600 font-bold text-sm px-5 py-3 rounded-2xl mb-3">
-          <Phone size={15} /> Call Restaurant
-        </a>
-        <button onClick={onNewOrder} className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-6 py-3 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform">
-          🛒 Order Again
+
+        {/* Order again CTA — big and bright */}
+        <button onClick={onNewOrder}
+          className="cancel-slide-4 w-full max-w-xs py-4 rounded-2xl font-black text-base text-white shadow-2xl active:scale-95 transition-transform mb-3"
+          style={{ background: "linear-gradient(135deg, #f97316, #ef4444)", boxShadow: "0 8px 32px rgba(249,115,22,0.5)" }}>
+          🛒 Build a new order →
         </button>
+
+        <a href="tel:+919194008822"
+          className="cancel-slide-5 flex items-center gap-2 text-white/50 font-semibold text-xs py-2 px-4 rounded-xl active:scale-95 transition-transform"
+          style={{ border: "1px solid rgba(255,255,255,0.15)" }}>
+          <Phone size={13} /> Call Restaurant
+        </a>
+
+        {/* Bottom tagline */}
+        <p className="cancel-slide-5 mt-8 text-white/25 text-xs">Burger Point — good food is always worth the wait 🍔</p>
       </div>
     );
   }
@@ -1243,6 +1581,30 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
                   className="flex-1 flex items-center justify-center gap-1.5 bg-green-100 text-green-800 text-xs font-bold py-2.5 rounded-xl shadow-sm">
                   💬 WhatsApp Rider
                 </a>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 🎮 Mini-game panel — visible while order is being prepared */}
+        {(status === "accepted" || status === "pending") && (
+          <div className="rounded-3xl mb-6 overflow-hidden" style={{ background: "linear-gradient(160deg,#1a1a2e,#0f3460)", border: "1.5px solid rgba(249,115,22,0.3)" }}>
+            <button
+              onClick={() => setGamesOpen(o => !o)}
+              className="w-full px-4 pt-4 pb-3 flex items-center justify-between active:opacity-80 transition-opacity">
+              <div className="text-left">
+                <p className="text-xs font-black text-orange-400 uppercase tracking-widest">While you wait</p>
+                <p className="text-sm font-bold text-white mt-0.5">
+                  {status === "accepted" ? "Kitchen's on it — play a quick game! 🎮" : "Waiting for kitchen — keep yourself busy 🍿"}
+                </p>
+              </div>
+              <span className="text-xs font-bold text-white/50 ml-3 flex-shrink-0">
+                {gamesOpen ? "▲ Hide" : "▼ Show"}
+              </span>
+            </button>
+            {gamesOpen && (
+              <div className="px-4 pb-4 pt-1">
+                <WaitingGames />
               </div>
             )}
           </div>
