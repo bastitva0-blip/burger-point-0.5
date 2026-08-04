@@ -281,6 +281,7 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
 
   const [roadDistanceKm, setRoadDistanceKm] = useState(null);
   const [fetchingDist,   setFetchingDist]   = useState(false);
+  const [isApproxDist,   setIsApproxDist]   = useState(false);
 
   // Fetch actual road distance from OSRM whenever customer location changes
   useEffect(() => {
@@ -288,15 +289,19 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
     const rLat = settings.restaurant_lat || 26.926287;
     const rLng = settings.restaurant_lng || 80.942995;
     setFetchingDist(true);
+    setIsApproxDist(false);
     fetch(`https://router.project-osrm.org/route/v1/driving/${rLng},${rLat};${customerInfo.lng},${customerInfo.lat}?overview=false`)
       .then(r => r.json())
       .then(d => {
         const km = d.routes?.[0]?.distance / 1000;
         setRoadDistanceKm(km ?? null);
+        setIsApproxDist(false);
       })
       .catch(() => {
-        // Fallback to haversine if OSRM fails
-        setRoadDistanceKm(haversineKm(rLat, rLng, customerInfo.lat, customerInfo.lng));
+        // OSRM failed — fallback to haversine with 1.3x buffer to cover road vs straight-line gap
+        const straight = haversineKm(rLat, rLng, customerInfo.lat, customerInfo.lng);
+        setRoadDistanceKm(straight != null ? straight * 1.3 : null);
+        setIsApproxDist(true);
       })
       .finally(() => setFetchingDist(false));
   }, [customerInfo?.lat, customerInfo?.lng, orderType, settings.restaurant_lat, settings.restaurant_lng]);
@@ -428,10 +433,18 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
               </div>
             )}
             {orderType === "delivery" && deliveryCalc?.deliverable && (
-              <div className="flex justify-between text-sm text-stone-600 mb-1">
-                <span>Delivery {fetchingDist ? "(checking…)" : deliveryCalc.distanceKm != null ? `(${deliveryCalc.distanceKm.toFixed(1)} km road)` : ""}</span>
-                <span>{deliveryCalc.freeDelivery ? "FREE" : `₹${deliveryFee}`}</span>
-              </div>
+              <>
+                <div className="flex justify-between text-sm text-stone-600 mb-1">
+                  <span>Delivery {fetchingDist ? "(checking…)" : deliveryCalc.distanceKm != null ? `(~${deliveryCalc.distanceKm.toFixed(1)} km${isApproxDist ? " approx" : " road"})` : ""}</span>
+                  <span>{deliveryCalc.freeDelivery ? "FREE" : `₹${deliveryFee}`}</span>
+                </div>
+                {isApproxDist && !fetchingDist && (
+                  <div className="flex items-start gap-1.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-2 text-xs text-amber-700">
+                    <span className="flex-shrink-0">⚠️</span>
+                    <span>Distance is approximate — road routing unavailable right now. Actual delivery fee may vary slightly.</span>
+                  </div>
+                )}
+              </>
             )}
             {packingCharge > 0 && (
               <div className="flex justify-between text-sm text-stone-600 mb-1">
@@ -2582,21 +2595,27 @@ export function CustomerInfoForm({ orderType, onSubmit }) {
 
   const [roadDistKm,   setRoadDistKm]   = useState(null);
   const [checkingDist, setCheckingDist] = useState(false);
+  const [isApproxDist, setIsApproxDist] = useState(false);
 
   // Fetch real road distance when coords change
   useEffect(() => {
-    if (!coords) { setRoadDistKm(null); return; }
+    if (!coords) { setRoadDistKm(null); setIsApproxDist(false); return; }
     const rLat = settings.restaurant_lat || 26.926287;
     const rLng = settings.restaurant_lng || 80.942995;
     setCheckingDist(true);
+    setIsApproxDist(false);
     fetch(`https://router.project-osrm.org/route/v1/driving/${rLng},${rLat};${coords.lng},${coords.lat}?overview=false`)
       .then(r => r.json())
       .then(d => {
         const km = d.routes?.[0]?.distance / 1000;
         setRoadDistKm(km ?? null);
+        setIsApproxDist(false);
       })
       .catch(() => {
-        setRoadDistKm(haversineKm(rLat, rLng, coords.lat, coords.lng));
+        // OSRM failed — fallback to haversine with 1.3x buffer to cover road vs straight-line gap
+        const straight = haversineKm(rLat, rLng, coords.lat, coords.lng);
+        setRoadDistKm(straight != null ? straight * 1.3 : null);
+        setIsApproxDist(true);
       })
       .finally(() => setCheckingDist(false));
   }, [coords?.lat, coords?.lng, settings.restaurant_lat, settings.restaurant_lng]);
@@ -2726,10 +2745,18 @@ export function CustomerInfoForm({ orderType, onSubmit }) {
               {locErr && <p className="text-[11px] text-amber-600">{locErr}</p>}
               {deliveryPreview && coords && (
                 deliveryPreview.deliverable ? (
-                  <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-2 text-xs text-green-700 flex items-center justify-between">
-                    <span>{checkingDist ? "Checking road distance…" : `${deliveryPreview.distanceKm.toFixed(1)} km (road) · ~${deliveryPreview.etaMinutes} min`}</span>
-                    <span className="font-bold">{deliveryPreview.freeDelivery ? "FREE delivery" : `+₹${deliveryPreview.fee} delivery`}</span>
-                  </div>
+                  <>
+                    <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-2 text-xs text-green-700 flex items-center justify-between">
+                      <span>{checkingDist ? "Checking road distance…" : `~${deliveryPreview.distanceKm.toFixed(1)} km${isApproxDist ? " (approx)" : " (road)"} · ~${deliveryPreview.etaMinutes} min`}</span>
+                      <span className="font-bold">{deliveryPreview.freeDelivery ? "FREE delivery" : `+₹${deliveryPreview.fee} delivery`}</span>
+                    </div>
+                    {isApproxDist && !checkingDist && (
+                      <div className="flex items-start gap-1.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-700">
+                        <span className="flex-shrink-0">⚠️</span>
+                        <span>Distance is approximate — road routing unavailable right now. Actual delivery fee may vary slightly.</span>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-600">
                     {deliveryPreview.reason}
