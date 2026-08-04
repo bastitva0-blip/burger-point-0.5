@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Search, X, Plus, Minus, ArrowLeft, ShoppingCart, MapPin, Phone,
   CheckCircle, User, Navigation, CreditCard, Smartphone, Download,
@@ -1346,7 +1346,7 @@ function OrderHistoryModal({ onClose, onReorder, onShareReceipt }) {
 // Picks one item per day from bestsellers, rotating daily.
 // Same item shows all day for consistency.
 function useTodaySpecial(menu, bestsellers) {
-  return React.useMemo(() => {
+  return useMemo(() => {
     const all = Object.values(menu).flat();
     const bsItems = all.filter(i => bestsellers.has(i.id) && i.is_available !== false);
     if (bsItems.length === 0) return null;
