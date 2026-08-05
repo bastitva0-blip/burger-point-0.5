@@ -3976,6 +3976,7 @@ export default function AdminApp() {
   const [reservations,    setReservations]    = useState([]);
   const [resvFilter,      setResvFilter]      = useState("pending"); // "pending"|"all"
   const { popup: newOrderPopup, unreadCount, acknowledge } = useOrderNotifications(orders, authed);
+  const [busyConfirm, setBusyConfirm] = useState(false);
 
   // ── Business settings ──
   const { settings: bizSettings } = useBusinessSettings();
@@ -4245,12 +4246,61 @@ export default function AdminApp() {
             {displayBadge > 0 && (
               <span className="bg-red-500 text-white text-xs font-black px-2 py-0.5 rounded-full animate-pulse">{displayBadge} new</span>
             )}
+            {/* 🔴🟢 Open/Closed quick toggle */}
+            <button onClick={() => setBusyConfirm(true)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-black text-xs transition-all ${
+                busy.is_busy
+                  ? "bg-red-100 text-red-600 border border-red-200"
+                  : "bg-green-100 text-green-700 border border-green-200"
+              }`}>
+              <span className="text-[10px]">{busy.is_busy ? "🔴" : "🟢"}</span>
+              {busy.is_busy ? "CLOSED" : "OPEN"}
+            </button>
             <button onClick={fetchOrders} disabled={loading}
               className="w-8 h-8 rounded-xl bg-stone-100 flex items-center justify-center">
               <RefreshCw size={13} className={`text-stone-500 ${loading ? "animate-spin" : ""}`} />
             </button>
           </div>
         </div>
+
+        {/* ── Open/Closed Confirm Modal ── */}
+        {busyConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setBusyConfirm(false)} />
+            <div className="relative bg-white rounded-3xl p-6 w-full max-w-xs shadow-2xl text-center">
+              <div className="text-5xl mb-3">{busy.is_busy ? "🟢" : "🔴"}</div>
+              <p className="font-black text-stone-800 text-lg mb-1">
+                {busy.is_busy ? "Reopen Restaurant?" : "Close Restaurant?"}
+              </p>
+              <p className="text-sm text-stone-500 mb-5">
+                {busy.is_busy
+                  ? "Customers will be able to place orders again."
+                  : "No new orders will come in until you reopen."}
+              </p>
+              <div className="flex gap-3">
+                <button onClick={() => setBusyConfirm(false)}
+                  className="flex-1 py-3 rounded-2xl bg-stone-100 text-stone-600 font-black text-sm active:scale-95 transition-all">
+                  Cancel
+                </button>
+                <button onClick={async () => {
+                    const newState = !busy.is_busy;
+                    setBusy(b => ({ ...b, is_busy: newState }));
+                    setBusyConfirm(false);
+                    setBusySaving(true);
+                    const { error } = await supabase.from("busy_mode").upsert({ id: 1, is_busy: newState, message: busy.message, opens_at: busy.opens_at });
+                    setBusySaving(false);
+                    if (error) { toast.error("Failed to save — try again"); setBusy(b => ({ ...b, is_busy: !newState })); }
+                    else { toast.success(newState ? "🔴 Restaurant closed" : "🟢 Restaurant reopened"); }
+                  }}
+                  className={`flex-[2] py-3 rounded-2xl font-black text-sm text-white shadow-lg active:scale-95 transition-all ${
+                    busy.is_busy ? "bg-green-500" : "bg-red-500"
+                  }`}>
+                  {busy.is_busy ? "Yes, Reopen" : "Yes, Close"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tab bar */}
         <div className="flex border-t border-stone-100 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
