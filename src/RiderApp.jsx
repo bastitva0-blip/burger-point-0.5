@@ -600,7 +600,7 @@ function LoginScreen({ onLogin }) {
     const { data, error } = await supabase.rpc("verify_rider_login", { p_rider_id: riderId.trim().toUpperCase(), p_password: pwd });
     setLoading(false);
     if (error || !data?.success) { setErr(data?.error || "Login failed."); return; }
-    localStorage.setItem(LS_RIDER, JSON.stringify(data.rider));
+    try { localStorage.setItem(LS_RIDER, JSON.stringify(data.rider)); } catch {}
     onLogin(data.rider);
   };
 
@@ -662,18 +662,28 @@ export default function RiderApp() {
   const { popup, unread, acknowledge } = useRiderNotifications(rider?.rider_id, orders, !!rider);
 
   const login  = (r) => { setRider(r); setAvailability(r.availability); };
-  const logout = () => { localStorage.removeItem(LS_RIDER); setRider(null); setOrders([]); };
+  const logout = () => { try { localStorage.removeItem(LS_RIDER); } catch {} setRider(null); setOrders([]); };
 
   // ── Validate stored session on mount ─────────────────────
   useEffect(() => {
     const stored = (() => { try { return JSON.parse(localStorage.getItem(LS_RIDER)); } catch { return null; } })();
     if (!stored?.rider_id || !SUPABASE_READY) return;
     // Silently verify the rider still exists in DB
+    // IMPORTANT: only clear session if rider genuinely not found (PGRST116).
+    // Network errors / timeouts must NOT wipe the session — causes blank screen on mobile.
     supabase.from("riders").select("rider_id, full_name, availability").eq("rider_id", stored.rider_id).single()
       .then(({ data, error }) => {
-        if (error || !data) { localStorage.removeItem(LS_RIDER); setRider(null); }
-        else { const updated = { ...stored, ...data }; localStorage.setItem(LS_RIDER, JSON.stringify(updated)); setRider(updated); }
-      });
+        if (data) {
+          const updated = { ...stored, ...data };
+          try { localStorage.setItem(LS_RIDER, JSON.stringify(updated)); } catch {}
+          setRider(updated);
+        } else if (error?.code === "PGRST116") {
+          // Row genuinely doesn't exist — clear stale session
+          try { localStorage.removeItem(LS_RIDER); } catch {}
+          setRider(null);
+        }
+        // Any other error (network, timeout, RLS) — keep stored session as-is
+      }).catch(() => { /* network error — keep session */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -756,7 +766,7 @@ export default function RiderApp() {
           rider_id: rider.rider_id || null,
         }, { onConflict: "endpoint" });
       } catch (e) {
-        console.warn("Rider push subscription failed:", e.message);
+        // rider push subscription failed — non-critical
       }
     })();
   }, [rider]);
