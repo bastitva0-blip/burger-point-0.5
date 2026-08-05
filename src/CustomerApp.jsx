@@ -33,12 +33,13 @@ function useAppUpdateAvailable() {
   return available;
 }
 
-const LS_FAVS        = "bp_favs";
-const LS_HISTORY     = "bp_order_history";
-const SS_ORDER       = "bp_placed_order";
+const LS_FAVS         = "bp_favs";
+const LS_HISTORY      = "bp_order_history";
+const SS_ORDER        = "bp_placed_order";
 const LS_ACTIVE_ORDER = "bp_active_order";   // persists across browser close
 const LS_BESTSELLERS  = "bp_bestsellers";    // cached bestseller IDs
-const LS_CUSTOMER    = "bp_customer";        // saved name + phone
+const LS_CUSTOMER     = "bp_customer";       // saved name + phone
+const LS_RESERVATION  = "bp_reservation";   // active reservation (persists across sessions)
 const ACTIVE_STATUSES = new Set(["pending", "accepted", "ready", "dispatched"]);
 const SS_WAIT    = "bp_wait_times";
 
@@ -3376,114 +3377,510 @@ export function CustomerInfoForm({ orderType, onSubmit }) {
 }
 
 // ── RESERVATION PAGE ──────────────────────────────────────
+// SQL migration needed: ALTER TABLE reservations ADD COLUMN IF NOT EXISTS pre_order_items jsonb DEFAULT '[]';
 export function ReservationPage() {
-  const [name,   setName]   = useState("");
-  const [phone,  setPhone]  = useState("");
+  // ── Existing reservation check ──
+  const [resv, setResv] = useState(() => {
+    try { const r = JSON.parse(localStorage.getItem(LS_RESERVATION) || "null"); return r; } catch { return null; }
+  });
+
+  // ── Form state ──
+  const [step,   setStep]   = useState(1); // 1=basic info, 2=pre-order food
+  const [name,   setName]   = useState(() => { try { return JSON.parse(localStorage.getItem(LS_CUSTOMER) || "{}").name || ""; } catch { return ""; } });
+  const [phone,  setPhone]  = useState(() => { try { return JSON.parse(localStorage.getItem(LS_CUSTOMER) || "{}").phone || ""; } catch { return ""; } });
   const [date,   setDate]   = useState("");
   const [time,   setTime]   = useState("");
   const [guests, setGuests] = useState(2);
   const [note,   setNote]   = useState("");
   const [err,    setErr]    = useState("");
-  const [done,   setDone]   = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const submit = async () => {
-    if (!name.trim())            { setErr("Please enter your name."); return; }
-    if (!/^\d{10}$/.test(phone)) { setErr("Enter a valid 10-digit phone number."); return; }
-    if (!date)                   { setErr("Please select a date."); return; }
-    if (!time)                   { setErr("Please select a time."); return; }
-    setSaving(true);
+  // ── Pre-order (step 2) ──
+  const [preCart, setPreCart] = useState([]); // [{id, name, price, qty}]
+  const [menuItems, setMenuItems] = useState([]);
+  const [menuCat,   setMenuCat]   = useState("burgers");
+  const [menuLoaded, setMenuLoaded] = useState(false);
+
+  // Load menu for pre-order step
+  useEffect(() => {
+    if (menuLoaded) return;
     if (SUPABASE_READY) {
-      const { error } = await supabase.from("reservations").insert({ name: name.trim(), phone, date, time, guests, note: note.trim(), status: "pending" });
-      if (error) {
-        setSaving(false);
-        setErr("Couldn't save reservation — " + error.message + ". Please call us directly.");
-        return;
+      supabase.from("menu_items").select("id,name,price,category,is_available").eq("is_available", true).order("category")
+        .then(({ data }) => {
+          setMenuItems(data?.length ? data : ALL_ITEMS);
+          setMenuLoaded(true);
+        }).catch(() => { setMenuItems(ALL_ITEMS); setMenuLoaded(true); });
+    } else { setMenuItems(ALL_ITEMS); setMenuLoaded(true); }
+  }, [menuLoaded]);
+
+  const addToPreCart = (item) => {
+    setPreCart(prev => {
+      const ex = prev.find(i => i.id === item.id);
+      if (ex) return prev.map(i => i.id === item.id ? { ...i, qty: i.qty + 1 } : i);
+      return [...prev, { id: item.id, name: item.name, price: item.price, qty: 1 }];
+    });
+  };
+  const removeFromPreCart = (id) => {
+    setPreCart(prev => {
+      const ex = prev.find(i => i.id === id);
+      if (!ex) return prev;
+      if (ex.qty === 1) return prev.filter(i => i.id !== id);
+      return prev.map(i => i.id === id ? { ...i, qty: i.qty - 1 } : i);
+    });
+  };
+  const preCartTotal = preCart.reduce((s, i) => s + i.price * i.qty, 0);
+  const preCartCount = preCart.reduce((s, i) => s + i.qty, 0);
+
+  // ── Real-time status subscription ──
+  useEffect(() => {
+    if (!resv?.id || !SUPABASE_READY) return;
+    const ch = supabase.channel("resv-" + resv.id)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "reservations", filter: `id=eq.${resv.id}` }, (p) => {
+        const updated = { ...resv, status: p.new.status };
+        setResv(updated);
+        localStorage.setItem(LS_RESERVATION, JSON.stringify(updated));
+        // Chime on confirmed
+        if (p.new.status === "confirmed") playChime("happy");
+        if (p.new.status === "cancelled") playChime("sad");
+      })
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resv?.id]);
+
+  const playChime = (type) => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (type === "happy") {
+        [[523,0,0.15],[659,0.15,0.15],[784,0.3,0.2],[1047,0.5,0.3]].forEach(([f,s,d]) => {
+          const o=ctx.createOscillator(), g=ctx.createGain();
+          o.connect(g); g.connect(ctx.destination); o.frequency.value=f; o.type="sine";
+          g.gain.setValueAtTime(0.2,ctx.currentTime+s); g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+s+d);
+          o.start(ctx.currentTime+s); o.stop(ctx.currentTime+s+d);
+        });
+      } else {
+        [[392,0,0.2],[349,0.22,0.2],[330,0.45,0.35]].forEach(([f,s,d]) => {
+          const o=ctx.createOscillator(), g=ctx.createGain();
+          o.connect(g); g.connect(ctx.destination); o.frequency.value=f; o.type="sine";
+          g.gain.setValueAtTime(0.18,ctx.currentTime+s); g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+s+d);
+          o.start(ctx.currentTime+s); o.stop(ctx.currentTime+s+d);
+        });
       }
-    }
-    setSaving(false);
-    setDone(true);
+    } catch {}
+    try { navigator.vibrate?.([60,30,60]); } catch {}
   };
 
   const today = new Date().toISOString().split("T")[0];
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-amber-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm bg-white rounded-3xl shadow-xl border border-orange-100 p-6">
-        <button onClick={() => window.location.hash = ""} className="text-xs text-stone-400 flex items-center gap-1 mb-4"><ArrowLeft size={12} /> Back</button>
-        {done ? (
-          <div className="text-center py-6">
-            <div className="text-5xl mb-4">🎉</div>
-            <h2 className="font-black text-stone-800 text-xl mb-2">Booking Requested!</h2>
-            <p className="text-sm text-stone-500 mb-1">We'll confirm on WhatsApp or call within 30 mins.</p>
-            <p className="text-sm text-stone-500 mb-5">For {guests} guests on {date} at {time}</p>
-            <a href={WHATSAPP} target="_blank" rel="noreferrer"
-              className="inline-flex items-center gap-2 bg-green-500 text-white font-bold text-sm px-5 py-3 rounded-2xl shadow-sm">
-              💬 Chat with us on WhatsApp
-            </a>
+  const goStep2 = () => {
+    if (!name.trim())            { setErr("Please enter your name."); return; }
+    if (!/^\d{10}$/.test(phone)) { setErr("Enter a valid 10-digit phone number."); return; }
+    if (!date)                   { setErr("Please select a date."); return; }
+    if (!time)                   { setErr("Please select a time."); return; }
+    setErr("");
+    setStep(2);
+  };
+
+  const submit = async (skipPreOrder = false) => {
+    setSaving(true);
+    const items = skipPreOrder ? [] : preCart;
+    const payload = { name: name.trim(), phone, date, time, guests, note: note.trim(), status: "pending", pre_order_items: items };
+    if (SUPABASE_READY) {
+      const { data, error } = await supabase.from("reservations").insert(payload).select().single();
+      if (error) {
+        setSaving(false);
+        setErr("Couldn't save — " + error.message + ". Call us directly.");
+        setStep(1);
+        return;
+      }
+      const saved = { ...payload, id: data.id, created_at: data.created_at };
+      localStorage.setItem(LS_RESERVATION, JSON.stringify(saved));
+      setResv(saved);
+    } else {
+      // Offline / demo mode
+      const saved = { ...payload, id: "demo-" + Date.now(), created_at: new Date().toISOString() };
+      localStorage.setItem(LS_RESERVATION, JSON.stringify(saved));
+      setResv(saved);
+    }
+    playChime("happy");
+    setSaving(false);
+  };
+
+  const clearResv = () => {
+    localStorage.removeItem(LS_RESERVATION);
+    setResv(null);
+    setStep(1);
+    setDate(""); setTime(""); setNote(""); setErr(""); setPreCart([]);
+  };
+
+  // ── STATUS SCREENS ──────────────────────────────────────
+
+  // Pending — beautiful "We got it, check back later" screen
+  if (resv?.status === "pending") {
+    const floaters = ["📅","🍔","✨","🌟","🎉","🍽️","⭐","🥂"];
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center relative overflow-hidden"
+        style={{ background: "linear-gradient(160deg,#0a0a1a 0%,#0d1b3e 50%,#0a2040 100%)" }}>
+        <style>{`
+          @keyframes starFloat { 0%{transform:translateY(0) rotate(0deg);opacity:0} 10%{opacity:.4} 90%{opacity:.4} 100%{transform:translateY(-110vh) rotate(360deg);opacity:0} }
+          @keyframes calPulse { 0%,100%{transform:scale(1) translateY(0)} 50%{transform:scale(1.07) translateY(-8px)} }
+          @keyframes rsvSlide { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
+          .rsv1{animation:rsvSlide .5s .1s both} .rsv2{animation:rsvSlide .5s .25s both} .rsv3{animation:rsvSlide .5s .4s both} .rsv4{animation:rsvSlide .5s .55s both} .rsv5{animation:rsvSlide .5s .7s both}
+        `}</style>
+
+        {floaters.map((e,i) => (
+          <span key={i} className="fixed text-xl select-none pointer-events-none" style={{
+            left:`${5+i*13}%`, top:0,
+            animation:`starFloat ${5+i*.8}s ${i*.5}s linear infinite`,
+          }}>{e}</span>
+        ))}
+
+        {/* Big calendar icon */}
+        <div className="rsv1 mb-6">
+          <div className="w-28 h-28 rounded-3xl flex items-center justify-center text-6xl"
+            style={{ background:"rgba(99,102,241,0.2)", border:"2px solid rgba(99,102,241,0.4)", animation:"calPulse 2.8s ease-in-out infinite" }}>
+            📅
           </div>
-        ) : (
-          <>
-            <div className="text-center mb-5">
-              <div className="w-14 h-14 bg-orange-100 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-3">📅</div>
-              <h2 className="font-black text-stone-800 text-xl">Book a Table</h2>
-              <p className="text-xs text-stone-400 mt-1">Reserve your spot at Burger Point</p>
+        </div>
+
+        <div className="rsv2 mb-2">
+          <p className="text-3xl font-black text-white tracking-tight">We got your request!</p>
+          <p className="text-base font-bold mt-1" style={{color:"#818cf8"}}>Hang tight, we'll confirm soon 🙏</p>
+        </div>
+
+        {/* Booking details card */}
+        <div className="rsv3 w-full max-w-xs rounded-2xl p-4 my-4 text-left space-y-2"
+          style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)" }}>
+          <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400 mb-3">Your Booking</p>
+          {[
+            ["👤 Name",   resv.name],
+            ["📅 Date",   resv.date],
+            ["🕐 Time",   resv.time],
+            ["👥 Guests", `${resv.guests} ${resv.guests===1?"person":"people"}`],
+          ].map(([l,v]) => (
+            <div key={l} className="flex justify-between items-center">
+              <span className="text-xs text-white/50">{l}</span>
+              <span className="text-xs font-bold text-white">{v}</span>
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Name *</label>
-                <div className="relative">
-                  <User size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                  <input value={name} onChange={e => { setName(e.target.value); setErr(""); }} placeholder="Your name"
-                    className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl pl-9 pr-4 py-3 outline-none text-stone-700" />
+          ))}
+          {resv.pre_order_items?.length > 0 && (
+            <div className="pt-2 mt-2" style={{borderTop:"1px solid rgba(255,255,255,0.1)"}}>
+              <p className="text-[10px] font-black uppercase tracking-widest text-orange-400 mb-2">Pre-ordered Food</p>
+              {resv.pre_order_items.map(i => (
+                <div key={i.id} className="flex justify-between text-xs text-white/70">
+                  <span>{i.name} ×{i.qty}</span>
+                  <span>₹{i.price * i.qty}</span>
                 </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Phone *</label>
-                <div className="relative">
-                  <Phone size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                  <input value={phone} onChange={e => { setPhone(e.target.value.replace(/\D/g, "").slice(0, 10)); setErr(""); }} placeholder="10-digit number" inputMode="numeric"
-                    className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl pl-9 pr-4 py-3 outline-none text-stone-700" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+              ))}
+            </div>
+          )}
+        </div>
+
+        <p className="rsv3 text-sm text-white/50 max-w-[260px] mb-5 leading-relaxed">
+          Check back here or visit <span className="text-indigo-400 font-bold">burgerpoint.co.in</span> to see your booking status. We'll also call or WhatsApp you to confirm!
+        </p>
+
+        <a href={WHATSAPP} target="_blank" rel="noreferrer"
+          className="rsv4 flex items-center gap-2 font-bold text-sm text-white px-6 py-3 rounded-2xl mb-3"
+          style={{ background:"#22c55e", boxShadow:"0 6px 24px rgba(34,197,94,0.4)" }}>
+          💬 Chat on WhatsApp
+        </a>
+
+        <button onClick={clearResv}
+          className="rsv5 text-xs text-white/30 font-semibold px-4 py-2 rounded-xl mt-1"
+          style={{ border:"1px solid rgba(255,255,255,0.1)" }}>
+          Make a new booking
+        </button>
+        <p className="rsv5 mt-6 text-white/20 text-xs">Burger Point · burgerpoint.co.in</p>
+      </div>
+    );
+  }
+
+  // Confirmed — green celebration screen
+  if (resv?.status === "confirmed") {
+    const confetti = ["🎉","🎊","⭐","✨","🥂","🍾","🎈","💚"];
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center relative overflow-hidden"
+        style={{ background:"linear-gradient(160deg,#052e16 0%,#14532d 50%,#166534 100%)" }}>
+        <style>{`
+          @keyframes confettiFall { 0%{transform:translateY(-40px) rotate(0deg);opacity:0} 10%{opacity:.5} 90%{opacity:.5} 100%{transform:translateY(110vh) rotate(540deg);opacity:0} }
+          @keyframes checkPop { 0%{transform:scale(0) rotate(-20deg)} 60%{transform:scale(1.15) rotate(5deg)} 100%{transform:scale(1) rotate(0deg)} }
+          .rsv1{animation:rsvSlide .5s .1s both} .rsv2{animation:rsvSlide .5s .3s both} .rsv3{animation:rsvSlide .5s .5s both} .rsv4{animation:rsvSlide .5s .7s both}
+        `}</style>
+        {confetti.map((e,i) => (
+          <span key={i} className="fixed text-2xl select-none pointer-events-none" style={{ left:`${5+i*12}%`, top:0, animation:`confettiFall ${4+i*.6}s ${i*.4}s linear infinite` }}>{e}</span>
+        ))}
+
+        <div className="rsv1 mb-6">
+          <div className="w-28 h-28 rounded-full flex items-center justify-center text-6xl"
+            style={{ background:"rgba(34,197,94,0.25)", border:"2px solid rgba(34,197,94,0.5)", animation:"checkPop .6s .2s both ease-out" }}>
+            ✅
+          </div>
+        </div>
+
+        <div className="rsv2 mb-2">
+          <p className="text-3xl font-black text-white">You're all set!</p>
+          <p className="text-base font-bold mt-1 text-green-300">Your table is confirmed 🎉</p>
+        </div>
+
+        <div className="rsv3 w-full max-w-xs rounded-2xl p-4 my-4 text-left space-y-2"
+          style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(34,197,94,0.3)" }}>
+          <p className="text-[10px] font-black uppercase tracking-widest text-green-400 mb-3">Confirmed Booking</p>
+          {[
+            ["👤",resv.name],["📅",resv.date],["🕐",resv.time],["👥",`${resv.guests} ${resv.guests===1?"guest":"guests"}`],
+          ].map(([e,v]) => (
+            <div key={e} className="flex justify-between"><span className="text-xs text-white/50">{e}</span><span className="text-xs font-bold text-white">{v}</span></div>
+          ))}
+          {resv.pre_order_items?.length > 0 && (
+            <div className="pt-2 mt-2" style={{borderTop:"1px solid rgba(34,197,94,0.2)"}}>
+              <p className="text-[10px] font-black uppercase tracking-widest text-orange-400 mb-2">Pre-ordered — ready when you arrive 🍔</p>
+              {resv.pre_order_items.map(i => (
+                <div key={i.id} className="flex justify-between text-xs text-white/70"><span>{i.name} ×{i.qty}</span><span>₹{i.price*i.qty}</span></div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <p className="rsv3 text-sm text-white/60 max-w-[260px] mb-5 leading-relaxed">
+          See you soon! Your table and{resv.pre_order_items?.length ? " food" : ""} will be ready when you arrive. 🚶‍♂️
+        </p>
+
+        <a href={WHATSAPP} target="_blank" rel="noreferrer"
+          className="rsv4 flex items-center gap-2 font-bold text-sm text-white px-6 py-3 rounded-2xl mb-3"
+          style={{ background:"#15803d", boxShadow:"0 6px 24px rgba(21,128,61,0.4)" }}>
+          💬 Message Us
+        </a>
+        <button onClick={clearResv} className="rsv4 text-xs text-white/30 font-semibold px-4 py-2 rounded-xl" style={{border:"1px solid rgba(255,255,255,0.1)"}}>
+          Make another booking
+        </button>
+      </div>
+    );
+  }
+
+  // Cancelled — reuse dark cancel aesthetic
+  if (resv?.status === "cancelled") {
+    const sadFoods = ["📅","🍔","😢","✖️","🚫","😔","💔","🙁"];
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center relative overflow-hidden"
+        style={{ background:"linear-gradient(160deg,#1a1a2e 0%,#16213e 40%,#0f3460 100%)" }}>
+        <style>{`@keyframes floatDown2{0%{transform:translateY(-60px) rotate(0deg);opacity:0}10%{opacity:.3}90%{opacity:.3}100%{transform:translateY(110vh) rotate(360deg);opacity:0}}</style>`}</style>
+        {sadFoods.map((e,i) => (
+          <span key={i} className="fixed text-xl select-none pointer-events-none" style={{ left:`${6+i*11}%`, top:0, animation:`floatDown2 ${4.5+i*.7}s ${i*.55}s linear infinite` }}>{e}</span>
+        ))}
+        <div className="rsv1 mb-6">
+          <div className="w-28 h-28 rounded-full flex items-center justify-center text-6xl"
+            style={{ background:"rgba(239,68,68,0.15)", border:"2px solid rgba(239,68,68,0.35)" }}>
+            📅
+          </div>
+          <div className="absolute -bottom-1 right-0 text-2xl" style={{marginTop:-20}}>❌</div>
+        </div>
+        <p className="text-3xl font-black text-white rsv1 mb-1">Booking declined</p>
+        <p className="text-base font-bold text-red-400 rsv2 mb-4">Sorry we couldn't fit you in this time</p>
+        <p className="text-sm text-white/50 max-w-[260px] rsv3 mb-6 leading-relaxed">
+          We apologise! Please try a different date or time, or give us a call and we'll sort something out 🙏
+        </p>
+        <button onClick={clearResv}
+          className="rsv4 w-full max-w-xs py-4 rounded-2xl font-black text-white mb-3"
+          style={{ background:"linear-gradient(135deg,#f97316,#ef4444)", boxShadow:"0 8px 32px rgba(249,115,22,0.45)" }}>
+          📅 Try Another Date
+        </button>
+        <a href="tel:+919194008822" className="rsv5 flex items-center justify-center gap-2 text-white/40 text-xs font-bold py-2 px-4 rounded-xl" style={{border:"1px solid rgba(255,255,255,0.12)"}}>
+          <Phone size={12} /> Call Us
+        </a>
+      </div>
+    );
+  }
+
+  // ── FORM SCREENS ─────────────────────────────────────────
+
+  const menuByCategory = menuItems.filter(i => i.category === menuCat);
+  const cats = [...new Set(menuItems.map(i => i.category))].slice(0, 8);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-amber-50">
+
+      {/* Header */}
+      <div className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-orange-100 px-4 py-3 flex items-center gap-3">
+        <button onClick={() => step === 2 ? setStep(1) : (window.location.hash = "")}
+          className="w-9 h-9 rounded-xl bg-stone-100 flex items-center justify-center">
+          <ArrowLeft size={15} className="text-stone-600" />
+        </button>
+        <div className="flex-1">
+          <p className="font-black text-stone-800 text-sm">Book a Table</p>
+          <p className="text-[10px] text-stone-400">Step {step} of 2 — {step===1?"Your Details":"Pre-order Food (optional)"}</p>
+        </div>
+        {/* Step dots */}
+        <div className="flex gap-1.5">
+          {[1,2].map(s => (
+            <div key={s} className="w-6 h-1.5 rounded-full transition-all" style={{ background: s <= step ? "#f97316" : "#e7e5e4" }} />
+          ))}
+        </div>
+      </div>
+
+      <div className="max-w-sm mx-auto px-4 py-6 pb-32">
+
+        {/* ── STEP 1: Basic info ── */}
+        {step === 1 && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-3xl border border-orange-100 p-5 shadow-sm">
+              <p className="text-xs font-black text-orange-500 uppercase tracking-widest mb-4">Your Details</p>
+              <div className="space-y-3">
                 <div>
-                  <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Date *</label>
-                  <input type="date" value={date} min={today} onChange={e => { setDate(e.target.value); setErr(""); }}
-                    className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl px-3 py-3 outline-none text-stone-700" />
+                  <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Name *</label>
+                  <div className="relative">
+                    <User size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                    <input value={name} onChange={e => { setName(e.target.value); setErr(""); }} placeholder="Your name"
+                      className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl pl-9 pr-4 py-3 outline-none text-stone-700" />
+                  </div>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Time *</label>
-                  <select value={time} onChange={e => { setTime(e.target.value); setErr(""); }}
-                    className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl px-3 py-3 outline-none text-stone-700">
-                    <option value="">Select…</option>
-                    {["11:00 AM", "12:00 PM", "1:00 PM", "2:00 PM", "3:00 PM", "4:00 PM", "5:00 PM", "6:00 PM", "7:00 PM", "8:00 PM", "9:00 PM", "10:00 PM"].map(t => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
+                  <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Phone *</label>
+                  <div className="relative">
+                    <Phone size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                    <input value={phone} onChange={e => { setPhone(e.target.value.replace(/\D/g,"").slice(0,10)); setErr(""); }} placeholder="10-digit number" inputMode="numeric"
+                      className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl pl-9 pr-4 py-3 outline-none text-stone-700" />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">No. of Guests</label>
-                <div className="flex items-center gap-3 bg-stone-50 rounded-xl px-4 py-2.5">
-                  <button onClick={() => setGuests(g => Math.max(1, g - 1))} className="w-8 h-8 flex items-center justify-center"><Minus size={14} className="text-stone-600" /></button>
-                  <span className="flex-1 text-center text-sm font-black text-stone-800">{guests} {guests === 1 ? "person" : "people"}</span>
-                  <button onClick={() => setGuests(g => Math.min(20, g + 1))} className="w-8 h-8 flex items-center justify-center"><Plus size={14} className="text-stone-600" /></button>
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Special Note</label>
-                <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Birthday, anniversary, dietary requirements…"
-                  className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl px-4 py-3 outline-none text-stone-700 resize-none h-16" />
               </div>
             </div>
-            {err && <p className="text-red-500 text-xs mt-3 text-center">{err}</p>}
-            <button onClick={submit} disabled={saving} className="w-full mt-5 bg-gradient-to-r from-orange-500 to-red-500 text-white py-4 rounded-2xl font-bold text-sm shadow-md active:scale-95 transition-transform disabled:opacity-60">
-              {saving ? "Booking…" : "📅 Request Booking"}
-            </button>
-            <p className="text-[10px] text-stone-400 text-center mt-2">We'll confirm via WhatsApp or phone call</p>
-          </>
+
+            <div className="bg-white rounded-3xl border border-orange-100 p-5 shadow-sm">
+              <p className="text-xs font-black text-orange-500 uppercase tracking-widest mb-4">Reservation Details</p>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Date *</label>
+                    <input type="date" value={date} min={today} onChange={e => { setDate(e.target.value); setErr(""); }}
+                      className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl px-3 py-3 outline-none text-stone-700" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Time *</label>
+                    <select value={time} onChange={e => { setTime(e.target.value); setErr(""); }}
+                      className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl px-3 py-3 outline-none text-stone-700">
+                      <option value="">Select…</option>
+                      {["11:00 AM","12:00 PM","1:00 PM","2:00 PM","3:00 PM","4:00 PM","5:00 PM","6:00 PM","7:00 PM","8:00 PM","9:00 PM","10:00 PM"].map(t=>(
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Guests</label>
+                  <div className="flex items-center gap-3 bg-stone-50 rounded-2xl px-4 py-2.5 border-2 border-stone-200">
+                    <button onClick={() => setGuests(g=>Math.max(1,g-1))} className="w-8 h-8 rounded-xl bg-white border border-stone-200 flex items-center justify-center">
+                      <Minus size={13} className="text-stone-600" />
+                    </button>
+                    <span className="flex-1 text-center text-sm font-black text-stone-800">{guests} {guests===1?"person":"people"}</span>
+                    <button onClick={() => setGuests(g=>Math.min(20,g+1))} className="w-8 h-8 rounded-xl bg-orange-500 flex items-center justify-center">
+                      <Plus size={13} className="text-white" />
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Special Note</label>
+                  <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Birthday, anniversary, dietary needs, seating preference…"
+                    className="w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-2xl px-4 py-3 outline-none text-stone-700 resize-none h-20" />
+                </div>
+              </div>
+            </div>
+
+            {err && <p className="text-red-500 text-xs text-center">{err}</p>}
+          </div>
         )}
+
+        {/* ── STEP 2: Pre-order food ── */}
+        {step === 2 && (
+          <div>
+            <div className="bg-white rounded-3xl border border-orange-100 p-4 mb-4 shadow-sm">
+              <p className="text-xs font-black text-orange-500 uppercase tracking-widest mb-1">Pre-order Your Dinner</p>
+              <p className="text-xs text-stone-400 leading-relaxed">Skip the wait — tell us what you'd like and it'll be ready when you arrive. You can always order more at the table!</p>
+            </div>
+
+            {/* Category pills */}
+            <div className="flex gap-2 overflow-x-auto pb-2 mb-3" style={{scrollbarWidth:"none"}}>
+              {cats.map(c => {
+                const cat = [{id:"burgers",emoji:"🍔"},{id:"grilled",emoji:"🌿"},{id:"pizza",emoji:"🍕"},{id:"pasta",emoji:"🍝"},{id:"sandwiches",emoji:"🥪"},{id:"wraps",emoji:"🌯"},{id:"chinese",emoji:"🥡"},{id:"noodles",emoji:"🍜"},{id:"rice",emoji:"🍚"},{id:"momos",emoji:"🥟"},{id:"quickbites",emoji:"🍟"},{id:"shakes",emoji:"🥤"},{id:"mocktails",emoji:"🍹"}].find(x=>x.id===c);
+                return (
+                  <button key={c} onClick={()=>setMenuCat(c)}
+                    className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${menuCat===c?"bg-orange-500 text-white":"bg-white border border-stone-200 text-stone-600"}`}>
+                    {cat?.emoji} {c.charAt(0).toUpperCase()+c.slice(1)}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Menu items */}
+            <div className="space-y-2 mb-4">
+              {menuByCategory.map(item => {
+                const inCart = preCart.find(i=>i.id===item.id);
+                return (
+                  <div key={item.id} className="bg-white rounded-2xl border border-stone-100 px-4 py-3 flex items-center gap-3 shadow-sm">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-stone-800 truncate">{item.name}</p>
+                      <p className="text-xs font-bold text-orange-500">₹{item.price}</p>
+                    </div>
+                    {inCart ? (
+                      <div className="flex items-center gap-2">
+                        <button onClick={()=>removeFromPreCart(item.id)} className="w-7 h-7 rounded-lg bg-stone-100 flex items-center justify-center">
+                          <Minus size={12} className="text-stone-600" />
+                        </button>
+                        <span className="text-sm font-black text-stone-800 w-4 text-center">{inCart.qty}</span>
+                        <button onClick={()=>addToPreCart(item)} className="w-7 h-7 rounded-lg bg-orange-500 flex items-center justify-center">
+                          <Plus size={12} className="text-white" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={()=>addToPreCart(item)} className="w-8 h-8 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-center active:scale-90 transition-transform">
+                        <Plus size={14} className="text-orange-500" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Pre-cart summary */}
+            {preCartCount > 0 && (
+              <div className="bg-white rounded-2xl border border-orange-200 p-4 mb-2">
+                <p className="text-xs font-black text-orange-500 uppercase tracking-widest mb-2">Your Pre-order ({preCartCount} items)</p>
+                {preCart.map(i=>(
+                  <div key={i.id} className="flex justify-between text-xs text-stone-700 py-0.5">
+                    <span>{i.name} ×{i.qty}</span><span className="font-bold">₹{i.price*i.qty}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between text-sm font-black text-stone-800 pt-2 mt-2 border-t border-stone-100">
+                  <span>Total</span><span className="text-orange-500">₹{preCartTotal}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Sticky bottom CTA */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-100 px-4 py-3 safe-bottom">
+        <div className="max-w-sm mx-auto space-y-2">
+          {step === 1 ? (
+            <button onClick={goStep2} disabled={saving}
+              className="w-full py-4 rounded-2xl font-black text-white text-sm shadow-lg active:scale-95 transition-transform"
+              style={{ background:"linear-gradient(135deg,#f97316,#ef4444)" }}>
+              Next: Pre-order Food →
+            </button>
+          ) : (
+            <>
+              <button onClick={()=>submit(false)} disabled={saving}
+                className="w-full py-3.5 rounded-2xl font-black text-white text-sm active:scale-95 transition-transform"
+                style={{ background:"linear-gradient(135deg,#f97316,#ef4444)" }}>
+                {saving ? "Booking…" : `📅 Confirm Booking${preCartCount > 0 ? ` + Pre-order (₹${preCartTotal})` : ""}`}
+              </button>
+              <button onClick={()=>submit(true)} disabled={saving}
+                className="w-full py-2.5 rounded-2xl text-xs font-bold text-stone-500 bg-stone-50 border border-stone-200 active:scale-95 transition-transform">
+                Skip food — just the table
+              </button>
+            </>
+          )}
+          <p className="text-[10px] text-stone-400 text-center">We'll confirm via WhatsApp or phone within 30 mins</p>
+        </div>
       </div>
     </div>
   );
