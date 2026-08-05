@@ -34,6 +34,11 @@ function useAppUpdateAvailable() {
 }
 
 const LS_FAVS         = "bp_favs";
+
+// ── Safe localStorage helpers (crash-safe for private/incognito browsing) ──
+const lsGet = (key, fallback = null) => { try { const v = localStorage.getItem(key); return v === null ? fallback : v; } catch { return fallback; } };
+const lsSet = (key, val) => { try { localStorage.setItem(key, val); } catch {} };
+const lsRemove = (key) => { try { localStorage.removeItem(key); } catch {} };
 const LS_HISTORY      = "bp_order_history";
 const SS_ORDER        = "bp_placed_order";
 const LS_ACTIVE_ORDER = "bp_active_order";   // persists across browser close
@@ -45,9 +50,9 @@ const SS_WAIT    = "bp_wait_times";
 
 const saveHistory = (order) => {
   try {
-    const list = JSON.parse(localStorage.getItem(LS_HISTORY) || "[]");
+    const list = JSON.parse(lsGet(LS_HISTORY, "[]"));
     list.unshift(order);
-    localStorage.setItem(LS_HISTORY, JSON.stringify(list.slice(0, 12)));
+    lsSet(LS_HISTORY, JSON.stringify(list.slice(0, 12)));
   } catch {}
 };
 
@@ -627,7 +632,7 @@ function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess
         }
       } catch (e) {
         // Non-blocking — never fail the payment flow because of a log write
-        console.warn("razorpay_events log failed:", e);
+        // razorpay_events log failed — non-critical
       }
     };
 
@@ -732,7 +737,7 @@ function SnakeGame() {
   const [food,  setFood]    = useState([12,5]);
   const [dir,   setDir]     = useState("RIGHT");
   const [score, setScore]   = useState(0);
-  const [best,  setBest]    = useState(() => +localStorage.getItem("bp_snake_best") || 0);
+  const [best,  setBest]    = useState(() => +lsGet("bp_snake_best", "0") || 0);
   const [dead,  setDead]    = useState(false);
   const [started, setStarted] = useState(false);
   const nextDir = useRef("RIGHT");
@@ -762,7 +767,7 @@ function SnakeGame() {
         const head = [(prev[0][0] + d[0] + COLS) % COLS, (prev[0][1] + d[1] + ROWS) % ROWS];
         if (prev.some(([x,y]) => x===head[0] && y===head[1])) {
           setDead(true);
-          setScore(sc => { const ns = sc; setBest(b => { const nb=Math.max(b,ns); localStorage.setItem("bp_snake_best",nb); return nb; }); return sc; });
+          setScore(sc => { const ns = sc; setBest(b => { const nb=Math.max(b,ns); lsSet("bp_snake_best", String(nb)); return nb; }); return sc; });
           return prev;
         }
         setFood(f => {
@@ -1017,7 +1022,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           delivery:   d.wait_delivery || 40,
         };
         setWaitTimes(updated);
-        localStorage.setItem(SS_WAIT, JSON.stringify(updated));
+        lsSet(SS_WAIT, JSON.stringify(updated));
       })
       .subscribe();
     return () => supabase.removeChannel(ch);
@@ -1108,7 +1113,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           role: "customer",
         }, { onConflict: "endpoint" });
       } catch (e) {
-        console.warn("Push subscription failed:", e.message);
+        // push subscription failed — non-critical
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1158,7 +1163,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
   useEffect(() => {
     if (status === "served" || status === "cancelled") {
       const t = setTimeout(() => {
-        localStorage.removeItem(LS_ACTIVE_ORDER);
+        lsRemove(LS_ACTIVE_ORDER);
         sessionStorage.removeItem(SS_ORDER);
       }, 3 * 60 * 1000); // keep for 3 minutes
       return () => clearTimeout(t);
@@ -1200,7 +1205,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
         // As soon as the order reaches a terminal state, wipe the persisted copies
         // so that a page-refresh no longer shows a stale "dispatched" or "pending" screen.
         if (TERMINAL.has(data.status)) {
-          localStorage.removeItem(LS_ACTIVE_ORDER);
+          lsRemove(LS_ACTIVE_ORDER);
           sessionStorage.removeItem(SS_ORDER);
         }
       }
@@ -1266,7 +1271,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
       const { error } = await supabase.from("reviews").insert({ order_id: order.id, rating });
       if (error) {
         // Fix 11: don't pretend the review was saved when it wasn't
-        console.error("Review save failed:", error);
+        console.warn("[bp] Review save failed:", error?.message);
         setThumbSent(null);
         setReviewDone(false);
         // Show the done state anyway for UX, but note the failure
@@ -1808,7 +1813,7 @@ function useTodaySpecial(menu, bestsellers) {
 function useBestsellers(menu) {
   const [bestsellers, setBestsellers] = useState(() => {
     try {
-      const cached = JSON.parse(localStorage.getItem(LS_BESTSELLERS) || "null");
+      const cached = JSON.parse(lsGet(LS_BESTSELLERS, "null"));
       if (cached && Date.now() - cached.ts < 3_600_000) return new Set(cached.ids);
     } catch {}
     return new Set();
@@ -1842,7 +1847,7 @@ function useBestsellers(menu) {
       // Manual takes priority; merge both sets
       const finalIds = new Set([...manualIds, ...autoIds]);
       setBestsellers(finalIds);
-      localStorage.setItem(LS_BESTSELLERS, JSON.stringify({ ids: [...finalIds], ts: Date.now() }));
+      lsSet(LS_BESTSELLERS, JSON.stringify({ ids: [...finalIds], ts: Date.now() }));
     };
     run();
   }, [menu]);
@@ -2044,7 +2049,7 @@ function usePushSubscription() {
     if (!import.meta.env.VITE_VAPID_PUBLIC_KEY) return;
 
     // Already subscribed or previously dismissed — don't show banner
-    if (localStorage.getItem(LS_PUSH_DISMISSED)) return;
+    if (lsGet(LS_PUSH_DISMISSED)) return;
     if (Notification.permission === "denied") return;
 
     // If already granted, silently subscribe without showing banner
@@ -2080,20 +2085,20 @@ function usePushSubscription() {
       }, { onConflict: "endpoint" });
       setSubbed(true);
     } catch (e) {
-      console.warn("Push subscription failed:", e.message);
+      // push subscription failed — non-critical
     }
   }
 
   const allow = async () => {
     setBanner(false);
-    localStorage.setItem(LS_PUSH_DISMISSED, "1"); // don't re-prompt regardless of outcome
+    lsSet(LS_PUSH_DISMISSED, "1"); // don't re-prompt regardless of outcome
     const permission = await Notification.requestPermission();
     if (permission === "granted") await subscribeSilently();
   };
 
   const dismiss = () => {
     setBanner(false);
-    localStorage.setItem(LS_PUSH_DISMISSED, "1");
+    lsSet(LS_PUSH_DISMISSED, "1");
   };
 
   return { banner, subbed, allow, dismiss };
@@ -2133,15 +2138,15 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const CART_TTL = 2 * 60 * 60 * 1000; // 2 hours
   const [cart, setCart] = useState(() => {
     try {
-      const raw = localStorage.getItem(LS_CART);
+      const raw = lsGet(LS_CART);
       if (!raw) return [];
       const { items, ts } = JSON.parse(raw);
-      if (Date.now() - ts > CART_TTL) { localStorage.removeItem(LS_CART); return []; }
+      if (Date.now() - ts > CART_TTL) { lsRemove(LS_CART); return []; }
       return items || [];
     } catch { return []; }
   });
   useEffect(() => {
-    localStorage.setItem(LS_CART, JSON.stringify({ items: cart, ts: Date.now() }));
+    lsSet(LS_CART, JSON.stringify({ items: cart, ts: Date.now() }));
   }, [cart]);
   const [showCart,      setShowCart]      = useState(false);
   const [itemModal,     setItemModal]     = useState(null);
@@ -2168,9 +2173,9 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       const ss = sessionStorage.getItem(SS_ORDER);
       if (ss) return JSON.parse(ss);
       // Resume across browser close
-      const ls = JSON.parse(localStorage.getItem(LS_ACTIVE_ORDER) || "null");
+      const ls = JSON.parse(lsGet(LS_ACTIVE_ORDER, "null"));
       if (ls && ACTIVE_STATUSES.has(ls.status)) return ls;
-      if (ls) localStorage.removeItem(LS_ACTIVE_ORDER); // stale served order
+      if (ls) lsRemove(LS_ACTIVE_ORDER); // stale served order
     } catch {}
     return null;
   });
@@ -2242,14 +2247,14 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         if (!ACTIVE_STATUSES.has(data.status)) {
           // Terminal (served / cancelled) — clear persisted copies NOW so a subsequent
           // refresh doesn't load a stale "dispatched" status and flash the wrong screen.
-          localStorage.removeItem(LS_ACTIVE_ORDER);
+          lsRemove(LS_ACTIVE_ORDER);
           sessionStorage.removeItem(SS_ORDER);
           // Still update state so OrderTracker can render the correct done/cancelled screen.
           setPlaced(updated);
         } else {
           setPlaced(updated);
           sessionStorage.setItem(SS_ORDER, JSON.stringify(updated));
-          localStorage.setItem(LS_ACTIVE_ORDER, JSON.stringify(updated));
+          lsSet(LS_ACTIVE_ORDER, JSON.stringify(updated));
         }
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2416,7 +2421,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   };
 
   const handleQty  = (i, qty) => qty <= 0 ? setCart(p => p.filter((_, x) => x !== i)) : setCart(p => p.map((c, x) => x === i ? { ...c, qty } : c));
-  const toggleFav  = (id) => { const next = favs.includes(id) ? favs.filter(f => f !== id) : [...favs, id]; setFavs(next); localStorage.setItem(LS_FAVS, JSON.stringify(next)); };
+  const toggleFav  = (id) => { const next = favs.includes(id) ? favs.filter(f => f !== id) : [...favs, id]; setFavs(next); lsSet(LS_FAVS, JSON.stringify(next)); };
 
   const shareCart = async () => {
     if (!code || cart.length === 0) return;
@@ -2545,14 +2550,14 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     // Fix 2b: persist order to localStorage BEFORE the insert attempt
     // so a page-refresh during the placing spinner always finds the order
     sessionStorage.setItem(SS_ORDER, JSON.stringify(payload));
-    localStorage.setItem(LS_ACTIVE_ORDER, JSON.stringify(payload));
+    lsSet(LS_ACTIVE_ORDER, JSON.stringify(payload));
 
     if (SUPABASE_READY) {
       try {
         const { error } = await supabase.from("orders").insert(payload);
         if (error) throw error;
       } catch (err) {
-        console.error("Order save error:", err);
+        console.warn("[bp] Order save error:", err);
         setPlacing(false);
         // Fix 2: show error card — do NOT clear cart; keep LS so tracker survives refresh
         setOrderError({ payload, paymentMethod, razorpayPaymentId });
@@ -2577,7 +2582,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       if (error) throw error;
       saveHistory(retryPayload);
       sessionStorage.setItem(SS_ORDER, JSON.stringify(retryPayload));
-      localStorage.setItem(LS_ACTIVE_ORDER, JSON.stringify(retryPayload));
+      lsSet(LS_ACTIVE_ORDER, JSON.stringify(retryPayload));
       // Clear error + cart, then show tracker — same order as finaliseOrder's success path
       setCart([]);       // clear cart first
       setOrderError(null);
@@ -2585,7 +2590,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       setPlacing(false);
       setPlaced(retryPayload);
     } catch (err) {
-      console.error("Retry error:", err);
+      console.warn("[bp] Retry error:", err);
       setRetrying(false);
     }
   };
