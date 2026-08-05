@@ -467,11 +467,11 @@ async function openPrintWindow(html) {
       color: { dark: "#000000", light: "#ffffff" },
     });
   } catch (e) {
-    console.warn("QR generation failed:", e);
+    // QR generation failed — non-critical
   }
 
   const w = window.open("", "_blank", "width=420,height=800");
-  if (!w) { alert("Pop-up blocked! Please allow pop-ups for this site."); return; }
+  if (!w) { toast.error("Pop-up blocked! Please allow pop-ups for this site, then try again."); return; }
   w.document.write(html);
   w.document.close();
 
@@ -599,7 +599,7 @@ function RiderFallbackControls({ order, onAdvance }) {
 
     const { error } = await supabase.from("orders").update(payload).eq("id", order.id);
     if (error) {
-      console.error("[rider-fallback] update failed:", error);
+      console.warn("[bp] rider-fallback update failed:", error?.message);
       return;
     }
     // Let the realtime subscription pick it up; also call onAdvance for
@@ -4085,7 +4085,7 @@ export default function AdminApp() {
     if (error) {
       // Roll back the optimistic update
       if (snapshot) setOrders(prev => prev.map(o => o.id === id ? snapshot : o));
-      console.error("updateStatus error:", error);
+      console.warn("[bp] updateStatus error:", error?.message);
       if (error.code === "42501" || error.message?.includes("policy")) {
         toast.error("⚠️ Permission denied — run fix_orders_rls.sql in Supabase dashboard.");
       } else if (error.code === "42703" || error.message?.includes("column")) {
@@ -4095,7 +4095,7 @@ export default function AdminApp() {
           toast.error("⚠️ Status update failed — check connection and tap Refresh.");
         }
         // Show a warning but don't block — the status did update
-        console.warn("updateStatus: some extra columns not found in DB, update retried with status only");
+        console.warn("[bp] updateStatus: retried with status only");
       } else {
         toast.error("⚠️ Status update failed — check connection and tap Refresh.");
       }
@@ -4154,7 +4154,7 @@ export default function AdminApp() {
         delivery_started_at: new Date().toISOString(),
       };
     } catch (e) {
-      console.warn("Route generation failed:", e);
+      // route generation failed — non-critical
       return null;
     }
   };
@@ -4177,7 +4177,7 @@ export default function AdminApp() {
     }).eq("id", orderId);
 
     if (error) {
-      console.error("handleAssign error:", error);
+      console.warn("[bp] handleAssign error:", error?.message);
       toast.error("⚠️ Rider assignment failed — check connection.");
       return;
     }
@@ -4191,7 +4191,7 @@ export default function AdminApp() {
 
     // Mark rider as Busy
     const { error: riderErr } = await supabase.from("riders").update({ availability: "Busy", updated_at: new Date().toISOString() }).eq("rider_id", rider.rider_id);
-    if (riderErr) console.warn("Rider availability update failed:", riderErr.message);
+    if (riderErr) console.warn("[bp] rider availability update failed:", riderErr?.message);
     setAssignModal(null);
   };
 
