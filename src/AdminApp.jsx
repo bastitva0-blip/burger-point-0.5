@@ -3271,12 +3271,10 @@ function NotificationsSection() {
 // ─────────────────────────────────────────────────────────
 //  SETTINGS TAB
 // ─────────────────────────────────────────────────────────
-function SettingsTab({ riders, setRiders, onLogout }) {
+function SettingsTab({ riders, setRiders, onLogout, busy, setBusy, busySaving, setBusySaving }) {
   const toast = useToast();
-  // Busy mode
-  const [busy,       setBusy]       = useState({ is_busy: false, message: "We are currently closed. Please check back later.", opens_at: "" });
+  // Busy mode (state lifted to AdminApp root for top-bar toggle access)
   const [busyLoaded, setBusyLoaded] = useState(false);
-  const [busySaving, setBusySaving] = useState(false);
 
   // Wait times
   const [waitTimes, setWaitTimes] = useState(() => {
@@ -3977,6 +3975,8 @@ export default function AdminApp() {
   const [resvFilter,      setResvFilter]      = useState("pending"); // "pending"|"all"
   const { popup: newOrderPopup, unreadCount, acknowledge } = useOrderNotifications(orders, authed);
   const [busyConfirm, setBusyConfirm] = useState(false);
+  const [busy,        setBusy]        = useState({ is_busy: false, message: "We are currently closed. Please check back later.", opens_at: "" });
+  const [busySaving,  setBusySaving]  = useState(false);
 
   // ── Business settings ──
   const { settings: bizSettings } = useBusinessSettings();
@@ -4032,6 +4032,9 @@ export default function AdminApp() {
   useEffect(() => {
     if (!authed || !SUPABASE_READY) return;
     fetchOrders();
+    // Load busy mode into root state
+    supabase.from("busy_mode").select("*").eq("id", 1).single()
+      .then(({ data }) => { if (data) setBusy(data); });
 
     let fallbackTimer = null;
     const clearFallback = () => { if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; } };
@@ -4483,7 +4486,7 @@ export default function AdminApp() {
         {tab === "sales"     && <SalesTab orders={orders} loading={loading} />}
         {tab === "customers" && <CustomersTab orders={orders} loading={loading} />}
         {tab === "riders"    && <RidersTab />}
-        {tab === "settings"  && <SettingsTab riders={riders} setRiders={setRiders} onLogout={logout} />}
+        {tab === "settings"  && <SettingsTab riders={riders} setRiders={setRiders} onLogout={logout} busy={busy} setBusy={setBusy} busySaving={busySaving} setBusySaving={setBusySaving} />}
       </div>
 
       {/* New order popup */}
