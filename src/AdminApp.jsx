@@ -3291,8 +3291,7 @@ function SettingsTab({ riders, setRiders, onLogout }) {
   const [couponErr, setCouponErr] = useState("");
   const [couponSaving, setCouponSaving] = useState(false);
 
-  // Reservations
-  const [reservations, setReservations] = useState([]);
+  // (Reservations are now managed in the Orders tab via root AdminApp state)
 
   useEffect(() => {
     if (!SUPABASE_READY) return;
@@ -3314,9 +3313,6 @@ function SettingsTab({ riders, setRiders, onLogout }) {
     // Load coupons
     supabase.from("coupons").select("*").order("created_at", { ascending: false })
       .then(({ data }) => { if (data) setCoupons(data); });
-    // Load reservations
-    supabase.from("reservations").select("*").order("date").order("time")
-      .then(({ data }) => { if (data) setReservations(data); });
   }, []);
 
   const saveBusy = async () => {
@@ -3361,16 +3357,6 @@ function SettingsTab({ riders, setRiders, onLogout }) {
     if (error) {
       setCoupons(prev => prev.map(c => c.id === id ? { ...c, is_active: current } : c));
       toast.error("⚠️ Couldn't toggle coupon — " + error.message);
-    }
-  };
-
-  const updateReservation = async (id, status) => {
-    const snapshot = reservations.find(r => r.id === id);
-    setReservations(prev => prev.map(r => r.id === id ? { ...r, status } : r));
-    const { error } = await supabase.from("reservations").update({ status }).eq("id", id);
-    if (error) {
-      if (snapshot) setReservations(prev => prev.map(r => r.id === id ? snapshot : r));
-      toast.error("⚠️ Couldn't update reservation — " + error.message);
     }
   };
 
@@ -3504,36 +3490,6 @@ function SettingsTab({ riders, setRiders, onLogout }) {
             </div>
           ))}
         </div>
-      </Section>
-
-      {/* ── RESERVATIONS ── */}
-      <Section emoji="📅" title="Table Reservations">
-        {reservations.length === 0 ? (
-          <p className="text-xs text-stone-400 text-center py-4">No reservations yet</p>
-        ) : (
-          <div className="space-y-2">
-            {reservations.map(r => (
-              <div key={r.id} className={`bg-stone-50 rounded-xl px-3 py-3 border ${r.status === "confirmed" ? "border-green-200" : r.status === "cancelled" ? "border-red-100 opacity-50" : "border-stone-100"}`}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-stone-800">{r.name} · {r.guests} guests</p>
-                    <p className="text-xs text-stone-500">{r.date} at {r.time} · {r.phone}</p>
-                    {r.note && <p className="text-xs text-stone-400 italic mt-0.5">"{r.note}"</p>}
-                  </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${r.status === "confirmed" ? "bg-green-100 text-green-700" : r.status === "cancelled" ? "bg-red-100 text-red-600" : "bg-yellow-100 text-yellow-700"}`}>
-                    {r.status}
-                  </span>
-                </div>
-                {r.status === "pending" && (
-                  <div className="flex gap-2 mt-2">
-                    <button onClick={() => updateReservation(r.id, "confirmed")} className="flex-1 bg-green-500 text-white text-xs font-bold py-1.5 rounded-lg">✓ Confirm</button>
-                    <button onClick={() => updateReservation(r.id, "cancelled")} className="flex-1 bg-stone-200 text-stone-600 text-xs font-bold py-1.5 rounded-lg">✕ Cancel</button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
       </Section>
 
       {/* ── LOGOUT ── */}
@@ -4017,6 +3973,8 @@ export default function AdminApp() {
   const [tab,             setTab]             = useState("orders");
   const [riders,          setRiders]          = useState(() => { try { return JSON.parse(localStorage.getItem("bp_riders") || "[]"); } catch { return []; } }); // Supabase sync happens in SettingsTab
   const [assignModal,     setAssignModal]     = useState(null);
+  const [reservations,    setReservations]    = useState([]);
+  const [resvFilter,      setResvFilter]      = useState("pending"); // "pending"|"all"
   const { popup: newOrderPopup, unreadCount, acknowledge } = useOrderNotifications(orders, authed);
 
   // ── Business settings ──
@@ -4045,6 +4003,30 @@ export default function AdminApp() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  // ── Reservations fetch + real-time ──
+  useEffect(() => {
+    if (!authed || !SUPABASE_READY) return;
+    supabase.from("reservations").select("*").order("date").order("time")
+      .then(({ data }) => { if (data) setReservations(data); });
+    const ch = supabase.channel("admin_reservations")
+      .on("postgres_changes", { event: "*", schema: "public", table: "reservations" }, p => {
+        if (p.eventType === "INSERT") setReservations(prev => [...prev, p.new].sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time)));
+        else if (p.eventType === "UPDATE") setReservations(prev => prev.map(r => r.id === p.new.id ? p.new : r));
+        else if (p.eventType === "DELETE") setReservations(prev => prev.filter(r => r.id !== p.old?.id));
+      }).subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [authed]);
+
+  const updateReservation = async (id, status) => {
+    const snapshot = reservations.find(r => r.id === id);
+    setReservations(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+    const { error } = await supabase.from("reservations").update({ status }).eq("id", id);
+    if (error) {
+      if (snapshot) setReservations(prev => prev.map(r => r.id === id ? snapshot : r));
+      toast.error("⚠️ Couldn't update reservation — " + error.message);
+    }
+  };
 
   useEffect(() => {
     if (!authed || !SUPABASE_READY) return;
@@ -4232,8 +4214,9 @@ export default function AdminApp() {
   const pendingCount = orders.filter(o => o.status === "pending").length;
   const displayBadge = unreadCount > 0 ? unreadCount : pendingCount;
 
+  const pendingResvCount = reservations.filter(r => r.status === "pending").length;
   const tabs = [
-    { id: "orders",    icon: <ShoppingBag size={16} />,   label: "Orders" },
+    { id: "orders",    icon: <ShoppingBag size={16} />,   label: "Orders",    badge: displayBadge || pendingResvCount },
     { id: "tables",    icon: <LayoutGrid size={16} />,    label: "Tables" },
     { id: "billing",   icon: <Printer size={16} />,       label: "Billing" },
     { id: "menu",      icon: <span className="text-base">🍔</span>, label: "Menu" },
@@ -4273,11 +4256,13 @@ export default function AdminApp() {
         <div className="flex border-t border-stone-100 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex-1 min-w-[60px] flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-bold transition-all ${tab === t.id ? "text-orange-500 border-b-2 border-orange-500" : "text-stone-400"}`}>
+              className={`flex-1 min-w-[60px] flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-bold transition-all relative ${tab === t.id ? "text-orange-500 border-b-2 border-orange-500" : "text-stone-400"}`}>
               {t.icon}
               {t.label}
-              {t.id === "orders" && displayBadge > 0 && (
-                <span className="w-1.5 h-1.5 rounded-full bg-red-500 absolute mt-0" />
+              {t.badge > 0 && (
+                <span className="absolute top-1.5 right-2 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-black flex items-center justify-center animate-pulse">
+                  {t.badge}
+                </span>
               )}
             </button>
           ))}
@@ -4297,6 +4282,92 @@ export default function AdminApp() {
         {/* ORDERS TAB */}
         {tab === "orders" && (
           <>
+            {/* ── RESERVATIONS PANEL ── */}
+            {(() => {
+              const pendingResvs = reservations.filter(r => r.status === "pending");
+              const shownResvs   = resvFilter === "pending" ? pendingResvs : reservations;
+              return (
+                <div className="mb-5 rounded-3xl overflow-hidden border border-indigo-100 bg-white shadow-sm">
+                  <div className="px-4 pt-4 pb-3 flex items-center justify-between"
+                    style={{ background: "linear-gradient(135deg,#eef2ff,#e0e7ff)" }}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">📅</span>
+                      <div>
+                        <p className="text-sm font-black text-indigo-900">Table Reservations</p>
+                        <p className="text-[10px] text-indigo-500 font-bold">
+                          {pendingResvs.length > 0 ? `${pendingResvs.length} awaiting confirmation` : "All caught up!"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-1.5">
+                      {["pending","all"].map(f=>(
+                        <button key={f} onClick={()=>setResvFilter(f)}
+                          className={`text-[10px] font-bold px-2.5 py-1 rounded-lg transition-all ${resvFilter===f?"bg-indigo-600 text-white":"bg-white/70 text-indigo-600 border border-indigo-200"}`}>
+                          {f==="pending"?"Pending":"All"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="divide-y divide-stone-50">
+                    {shownResvs.length === 0 ? (
+                      <p className="text-xs text-stone-400 text-center py-5">
+                        {resvFilter === "pending" ? "No pending reservations 🎉" : "No reservations yet"}
+                      </p>
+                    ) : shownResvs.map(r => (
+                      <div key={r.id} className={`px-4 py-3 transition-all ${r.status==="cancelled"?"opacity-40":""}`}>
+                        <div className="flex items-start gap-3">
+                          <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0"
+                            style={{ background: r.status==="confirmed"?"#dcfce7":r.status==="cancelled"?"#fee2e2":"#fef9c3" }}>
+                            {r.status==="confirmed"?"✅":r.status==="cancelled"?"❌":"⏳"}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-bold text-stone-800">{r.name}</p>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${r.status==="confirmed"?"bg-green-100 text-green-700":r.status==="cancelled"?"bg-red-100 text-red-500":"bg-yellow-100 text-yellow-700"}`}>
+                                {r.status}
+                              </span>
+                            </div>
+                            <p className="text-xs text-stone-500 mt-0.5">
+                              📅 {r.date} · 🕐 {r.time} · 👥 {r.guests} guests · 📞 {r.phone}
+                            </p>
+                            {r.note && <p className="text-xs text-stone-400 italic mt-0.5">"{r.note}"</p>}
+                            {r.pre_order_items?.length > 0 && (
+                              <div className="mt-1.5 bg-orange-50 rounded-xl px-3 py-2 border border-orange-100">
+                                <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-1">Pre-ordered Food 🍔</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {r.pre_order_items.map(i=>(
+                                    <span key={i.id} className="text-[10px] bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-lg">
+                                      {i.name} ×{i.qty}
+                                    </span>
+                                  ))}
+                                </div>
+                                <p className="text-[10px] font-bold text-orange-500 mt-1">
+                                  Total: ₹{r.pre_order_items.reduce((s,i)=>s+i.price*i.qty,0)}
+                                </p>
+                              </div>
+                            )}
+                            {r.status === "pending" && (
+                              <div className="flex gap-2 mt-2">
+                                <button onClick={() => updateReservation(r.id, "confirmed")}
+                                  className="flex-1 bg-green-500 text-white text-xs font-bold py-2 rounded-xl active:scale-95 transition-transform">
+                                  ✓ Confirm Booking
+                                </button>
+                                <button onClick={() => updateReservation(r.id, "cancelled")}
+                                  className="flex-1 bg-stone-100 text-stone-600 text-xs font-bold py-2 rounded-xl active:scale-95 transition-transform">
+                                  ✕ Decline
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Filters */}
             <div className="flex gap-2 mb-4 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
               {[
