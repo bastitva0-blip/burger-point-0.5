@@ -677,7 +677,8 @@ function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm"
+      onClick={() => { if (!rzpOpened && !loading) onCancel?.(); }}>
       <div className="w-full bg-white rounded-t-3xl max-w-lg mx-auto p-6" onClick={e => e.stopPropagation()}>
         <div className="w-10 h-1 bg-stone-200 rounded-full mx-auto mb-5" />
         <div className="flex items-center gap-3 mb-6">
@@ -1186,6 +1187,8 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
       if (!data) return;
       if (data.status) {
         // Feature 7: push notification on status change
+        // _lastStatus is seeded below with order.status so resuming a page never
+        // fires a notification for the status that was already known on mount.
         const prevStatus = applyUpdateRef.current?._lastStatus;
         if (data.status !== prevStatus && "Notification" in window && Notification.permission === "granted") {
           const NOTIF_MSGS = {
@@ -1216,6 +1219,9 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
       if (applyUpdateRef.current) applyUpdateRef.current._lastStatus = data.status || applyUpdateRef.current._lastStatus;
     };
     applyUpdateRef.current = applyUpdate;
+    // Seed with the known status so the first fetch/realtime event doesn't
+    // trigger a notification for a status the customer already saw.
+    applyUpdateRef.current._lastStatus = order.status || null;
 
     const ORDER_FIELDS = "status, rider_name, rider_phone, route_geometry, route_distance_km, route_eta_minutes, delivery_started_at, customer_lat, customer_lng, cancel_reason";
 
@@ -2130,12 +2136,13 @@ function PushBanner({ onAllow, onDismiss }) {
 }
 
 // ── CUSTOMER APP ──────────────────────────────────────────
+// Cart persistence — module-level so they're never recreated on render
+const LS_CART  = "bp_cart_v2";
+const CART_TTL = 2 * 60 * 60 * 1000; // 2 hours
+
 export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const [activeCat,     setActiveCat]     = useState("burgers");
   const [search,        setSearch]        = useState("");
-  // Fix 9: cart in localStorage with 2-hour TTL so back-navigation can't lose it
-  const LS_CART = "bp_cart_v2";
-  const CART_TTL = 2 * 60 * 60 * 1000; // 2 hours
   const [cart, setCart] = useState(() => {
     try {
       const raw = lsGet(LS_CART);
@@ -2209,6 +2216,11 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const [cartBouncing, setCartBouncing] = useState(false);
   const toast = useToast();
 
+  // Ref so the realtime unavailability handler always sees the latest cart
+  // without needing cart in its dependency array (which would re-subscribe on every change)
+  const cartRef = useRef(cart);
+  useEffect(() => { cartRef.current = cart; }, [cart]);
+
   const bestsellers = useBestsellers(menu);
   const todaySpecial = useTodaySpecial(menu, bestsellers);
   const [bsCollapsed, setBsCollapsed] = useState(false);
@@ -2222,19 +2234,17 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "menu_items" }, (payload) => {
         const item = payload.new;
         if (item.is_available === false) {
-          setUnavailableCartIds(prev => {
-            // only flag if item is in cart
-            const cartIds = cart.map(c => c.id);
-            if (cartIds.includes(item.id)) return new Set([...prev, item.id]);
-            return prev;
-          });
+          // Use cartRef so we always see the current cart, not the mount-time snapshot
+          const cartIds = cartRef.current.map(c => c.id);
+          if (cartIds.includes(item.id)) {
+            setUnavailableCartIds(prev => new Set([...prev, item.id]));
+          }
         } else {
           setUnavailableCartIds(prev => { const n = new Set(prev); n.delete(item.id); return n; });
         }
       })
       .subscribe();
     return () => supabase.removeChannel(channel);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-verify resumed order status on mount
@@ -2348,7 +2358,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       setActiveCat(visibleCategories[0].id);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dbCategories]);
+  }, [dbCategories, menuLoaded]);
 
   const enabledCatIds = new Set(visibleCategories.map(c => c.id));
   // ALL includes every item whose category is currently visible & enabled
@@ -2969,17 +2979,6 @@ export function LandingPage({ installPrompt }) {
     supabase.from("busy_mode").select("*").eq("id", 1).single()
       .then(({ data }) => { if (data?.is_busy) setBusy(data); });
   }, []);
-
-  const TABLE_CODES_REF = Object.fromEntries(
-    Object.entries(
-      Object.assign({}, ...Object.keys({
-        "7294831056": 1, "4058379126": 2, "8163059247": 3, "2947063815": 4, "5820394176": 5,
-        "3614729058": 6, "9037246815": 7, "1472958630": 8, "6895230174": 9, "4260817953": 10,
-        "8531064279": 11, "3749158260": 12, "7048263591": 13, "3619470825": 14, "5283701964": 15,
-        "9146852037": 16, "2705638149": 17, "6493027581": 18, "8027541693": 19, "1359820746": 20,
-      }).map(k => [k, `Table ${Object.keys({ "7294831056": 1 }).length}`]))
-    )
-  );
 
   const go = (c) => {
     const tbl = {
@@ -3668,7 +3667,15 @@ export function ReservationPage() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center relative overflow-hidden"
         style={{ background:"linear-gradient(160deg,#1a1a2e 0%,#16213e 40%,#0f3460 100%)" }}>
-        <style>{`@keyframes floatDown2{0%{transform:translateY(-60px) rotate(0deg);opacity:0}10%{opacity:.3}90%{opacity:.3}100%{transform:translateY(110vh) rotate(360deg);opacity:0}}</style>`}</style>
+        <style>{`
+          @keyframes floatDown2{0%{transform:translateY(-60px) rotate(0deg);opacity:0}10%{opacity:.3}90%{opacity:.3}100%{transform:translateY(110vh) rotate(360deg);opacity:0}}
+          @keyframes rsvSlide{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+          .rsv1{animation:rsvSlide .5s .1s both}
+          .rsv2{animation:rsvSlide .5s .3s both}
+          .rsv3{animation:rsvSlide .5s .5s both}
+          .rsv4{animation:rsvSlide .5s .7s both}
+          .rsv5{animation:rsvSlide .5s .9s both}
+        `}</style>
         {sadFoods.map((e,i) => (
           <span key={i} className="fixed text-xl select-none pointer-events-none" style={{ left:`${6+i*11}%`, top:0, animation:`floatDown2 ${4.5+i*.7}s ${i*.55}s linear infinite` }}>{e}</span>
         ))}
