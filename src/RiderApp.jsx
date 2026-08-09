@@ -710,7 +710,7 @@ export default function RiderApp() {
     setAvailability(avail);
     await supabase.from("riders").update({ availability: avail, updated_at: new Date().toISOString() }).eq("rider_id", rider.rider_id);
     const updated = { ...rider, availability: avail };
-    localStorage.setItem(LS_RIDER, JSON.stringify(updated));
+    try { localStorage.setItem(LS_RIDER, JSON.stringify(updated)); } catch {}
     setRider(updated);
   };
 
