@@ -270,7 +270,7 @@ function ItemModal({ item, onClose, onAdd }) {
 }
 
 // ── CART DRAWER ───────────────────────────────────────────
-function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null, supabaseDown = false, menu = {}, bestsellers = new Set(), onAddSuggested }) {
+function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null, supabaseDown = false, menu = {}, bestsellers = new Set(), onAddSuggested, validating = false }) {
   const comboSuggestions = useComboSuggestions(cart, menu);
   const [note, setNote]           = useState("");
   const [promoCode, setPromoCode] = useState("");
@@ -573,11 +573,15 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
           ) : (
             <>
               <button onClick={() => onPlace({ note, total, discount, promoCode: promo?.code, deliveryFee, packingCharge, gstAmount, distanceKm: deliveryCalc?.distanceKm ?? null })}
-                disabled={!canPlace}
-                className="w-full bg-gradient-to-r from-orange-500 to-red-600 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none">
-                🍔 Place Order · ₹{total}
+                disabled={!canPlace || validating}
+                className="w-full bg-gradient-to-r from-orange-500 to-red-600 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2">
+                {validating
+                  ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Checking…</>
+                  : <>🍔 Place Order · ₹{total}</>}
               </button>
-              <p className="text-center text-[10px] text-stone-400 mt-2">Order sent directly to kitchen</p>
+              <p className="text-center text-[10px] text-stone-400 mt-2">
+                {validating ? "Verifying your items…" : "Order sent directly to kitchen"}
+              </p>
             </>
           )}
         </div>
@@ -590,23 +594,33 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
 const RZP_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID || "";
 
 function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess, onClose, onCancel, onCash }) {
-  const [loading,    setLoading]    = useState(false);
-  const [err,        setErr]        = useState("");
-  const [failed,     setFailed]     = useState(false);
+  const [loading,        setLoading]        = useState(false);
+  const [err,            setErr]            = useState("");
+  const [failed,         setFailed]         = useState(false);
+  const [scriptFailures, setScriptFailures] = useState(0); // track consecutive load failures
   // Tracks whether Razorpay checkout was opened — disables Cash fallback to prevent
   // the race condition where ondismiss fires before handler after a successful capture.
   const [rzpOpened,  setRzpOpened]  = useState(false);
   // Ref so the ondismiss closure always sees the latest value without a stale capture.
   const paymentCapturedRef = useRef(false);
 
+  // Retries the script load once after 1.5s before giving up.
   const loadScript = () =>
     new Promise(resolve => {
       if (window.Razorpay) { resolve(true); return; }
-      const s = document.createElement("script");
-      s.src = "https://checkout.razorpay.com/v1/checkout.js";
-      s.onload  = () => resolve(true);
-      s.onerror = () => resolve(false);
-      document.body.appendChild(s);
+      const tryLoad = (isRetry = false) => {
+        // Remove any stale failed script tag before retrying
+        document.querySelectorAll("script[src*='razorpay']").forEach(s => s.remove());
+        const s = document.createElement("script");
+        s.src = "https://checkout.razorpay.com/v1/checkout.js";
+        s.onload  = () => resolve(true);
+        s.onerror = () => {
+          if (!isRetry) setTimeout(() => tryLoad(true), 1500); // one retry after 1.5s
+          else resolve(false);
+        };
+        document.body.appendChild(s);
+      };
+      tryLoad();
     });
 
   const openRazorpay = async () => {
@@ -614,7 +628,15 @@ function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess
     paymentCapturedRef.current = false;
     const ok = await loadScript();
     setLoading(false);
-    if (!ok) { setErr("Could not load Razorpay. Check your internet and try again."); return; }
+    if (!ok) {
+      const failures = scriptFailures + 1;
+      setScriptFailures(failures);
+      // After 2 failures, strongly nudge cash — don't leave them stranded
+      setErr(failures >= 2
+        ? "Razorpay couldn't load (poor connection). Please use Cash below — your order is safe."
+        : "Could not load payment page. Check your connection and try again.");
+      return;
+    }
 
     // Log every Razorpay attempt to Supabase so no payment event is ever lost.
     // Fires for success, failure, and dismiss — gives full audit trail.
@@ -710,9 +732,17 @@ function RazorpayModal({ amount, customerName, customerPhone, orderId, onSuccess
         </button>
 
         <button onClick={onCash} disabled={rzpOpened}
-          className="w-full border-2 border-dashed border-stone-200 text-stone-500 text-sm font-bold py-3.5 rounded-2xl hover:border-orange-300 hover:text-orange-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:text-stone-500">
+          className={`w-full border-2 text-sm font-bold py-3.5 rounded-2xl transition-all disabled:opacity-40 disabled:cursor-not-allowed
+            ${scriptFailures >= 2 && !rzpOpened
+              ? "border-orange-400 bg-orange-50 text-orange-700 animate-pulse"
+              : "border-dashed border-stone-200 text-stone-500 hover:border-orange-300 hover:text-orange-600 disabled:hover:border-stone-200 disabled:hover:text-stone-500"}`}>
           💵 Pay Cash at Counter / Door
         </button>
+        {scriptFailures >= 2 && !rzpOpened && (
+          <p className="text-center text-[10px] text-orange-500 font-bold mt-1">
+            ↑ Recommended due to poor connection
+          </p>
+        )}
         {rzpOpened && (
           <p className="text-center text-[10px] text-stone-400 mt-1">
             Payment in progress — please complete or close the Razorpay window
@@ -1247,12 +1277,22 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
       )
       .subscribe();
 
-    // 3. Always-on polling every 10 s — guarantees updates even when Realtime is
-    //    "SUBSCRIBED" but the orders table has replication disabled (silent no-op).
-    const pollTimer = setInterval(() => fetchNow(0), 10000);
+    // 3. Always-on polling — 5s when the tab is visible (customer is watching),
+    //    15s when hidden (background tab / phone screen off) to save battery.
+    //    Guarantees updates even when Realtime replication is disabled on the table.
+    let pollTimer = setInterval(() => fetchNow(0), document.visibilityState === "visible" ? 5000 : 15000);
 
-    // 4. Re-fetch immediately when the customer switches back to this tab/app.
-    const onVisible = () => { if (document.visibilityState === "visible") fetchNow(0); };
+    // 4. Re-fetch immediately when the customer switches back to this tab/app,
+    //    and re-tune the polling interval for the new visibility state.
+    const onVisible = () => {
+      clearInterval(pollTimer);
+      if (document.visibilityState === "visible") {
+        fetchNow(0);
+        pollTimer = setInterval(() => fetchNow(0), 5000);
+      } else {
+        pollTimer = setInterval(() => fetchNow(0), 15000);
+      }
+    };
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
@@ -2565,22 +2605,41 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
 
   const [cartValidationError, setCartValidationError] = useState(null); // Feature 9
 
+  const [validating, setValidating] = useState(false); // true while pre-placement check runs
+
   const handlePlaceAttempt = async (opts) => {
     if (updateAvailable) { setShowCart(false); setShowUpdateGate(true); return; }
 
-    // Feature 9: validate all cart items are still available
+    // Feature 9: validate all cart items are still available.
+    // Wrapped in a 3s timeout — if the DB is slow/unreachable, skip validation
+    // and let the order through rather than blocking the customer indefinitely.
     if (SUPABASE_READY && cart.length > 0) {
       const ids = cart.map(i => i.id).filter(Boolean);
       if (ids.length > 0) {
-        const { data } = await supabase.from("menu_items").select("id, name, is_available").in("id", ids);
-        if (data) {
-          const unavail = data.filter(d => d.is_available === false);
-          if (unavail.length > 0) {
-            const names = unavail.map(d => d.name).join(", ");
-            setCartValidationError(`Sorry, these items are no longer available: ${names}. Please remove them to continue.`);
-            return;
+        setValidating(true);
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 3000);
+          const { data } = await supabase
+            .from("menu_items")
+            .select("id, name, is_available")
+            .in("id", ids)
+            .abortSignal(controller.signal);
+          clearTimeout(timer);
+          if (data) {
+            const unavail = data.filter(d => d.is_available === false);
+            if (unavail.length > 0) {
+              const names = unavail.map(d => d.name).join(", ");
+              setCartValidationError(`Sorry, these items are no longer available: ${names}. Please remove them to continue.`);
+              setValidating(false);
+              return;
+            }
           }
+          // If data is null (timeout/network error), fall through and place anyway
+        } catch {
+          // Timed out or network error — don't block the customer, place the order
         }
+        setValidating(false);
       }
     }
     setCartValidationError(null);
@@ -3181,7 +3240,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         <CartDrawer cart={cart} tableLabel={tableLabel} orderType={orderType} customerInfo={customerInfo} settings={bizSettings}
           onClose={() => setShowCart(false)} onQty={handleQty} onRemove={i => { setCart(p => p.filter((_, x) => x !== i)); setCartValidationError(null); }} onPlace={handlePlaceAttempt}
           unavailableIds={unavailableCartIds} validationError={cartValidationError} supabaseDown={supabaseDown}
-          menu={menu} bestsellers={bestsellers} onAddSuggested={(item) => { handleAdd(item); }} />
+          menu={menu} bestsellers={bestsellers} onAddSuggested={(item) => { handleAdd(item); }} validating={validating} />
       )}
       {showRazorpay && (
         <RazorpayModal amount={showRazorpay.total} customerName={customerInfo?.name || tableLabel || "Customer"} customerPhone={customerInfo?.phone}
