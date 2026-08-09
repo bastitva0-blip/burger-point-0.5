@@ -1740,34 +1740,6 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
             🛒 New Order
           </button>
         )}
-        {/* Escape hatch — clears stuck orders without support intervention */}
-        <details className="mt-5 group">
-          <summary className="text-xs text-stone-400 text-center cursor-pointer select-none list-none flex items-center justify-center gap-1 hover:text-stone-500 transition-colors">
-            <span className="group-open:hidden">🤔 Something wrong with this screen?</span>
-            <span className="hidden group-open:inline">▲ Hide</span>
-          </summary>
-          <div className="mt-3 bg-stone-50 border border-stone-200 rounded-2xl p-4 text-center">
-            <p className="text-xs text-stone-500 mb-3 leading-relaxed">
-              If this screen is stuck or showing an old order, you can clear it and start fresh. Your order is safe — this only affects what's shown on your device.
-            </p>
-            <button
-              onClick={() => {
-                lsRemove(LS_ACTIVE_ORDER);
-                sessionStorage.removeItem(SS_ORDER);
-                onNewOrder();
-              }}
-              className="w-full py-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs font-bold active:scale-95 transition-transform"
-            >
-              🔄 Clear stuck screen & go to menu
-            </button>
-            <a href="https://wa.me/919194008822?text=Hi%2C%20my%20order%20screen%20is%20stuck%20on%20Burger%20Point%20app."
-              target="_blank" rel="noreferrer"
-              className="mt-2 block text-xs text-green-700 font-semibold py-2">
-              💬 Or WhatsApp us for help
-            </a>
-          </div>
-        </details>
-
         <div className="mt-4 flex gap-3 justify-center">
           <button onClick={() => window.location.hash = "privacy"} className="text-xs text-stone-400 underline">Privacy Policy</button>
           <button onClick={() => window.location.hash = "contact"} className="text-xs text-stone-400 underline">Contact Us</button>
@@ -2222,26 +2194,6 @@ function PushBanner({ onAllow, onDismiss }) {
 const LS_CART  = "bp_cart_v2";
 const CART_TTL = 2 * 60 * 60 * 1000; // 2 hours
 
-// ── Boot-time stale-order cleanup ────────────────────────
-// Runs once at module evaluation (before any component mounts).
-// Any LS_ACTIVE_ORDER older than 24 h is silently wiped — no DB call needed.
-const ACTIVE_ORDER_TTL = 24 * 60 * 60 * 1000; // 24 hours
-;(() => {
-  try {
-    const raw = localStorage.getItem(LS_ACTIVE_ORDER);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    const age = Date.now() - new Date(parsed?.created_at ?? 0).getTime();
-    if (age > ACTIVE_ORDER_TTL) {
-      localStorage.removeItem(LS_ACTIVE_ORDER);
-      sessionStorage.removeItem(SS_ORDER);
-    }
-  } catch {
-    // corrupt entry — clear it
-    try { localStorage.removeItem(LS_ACTIVE_ORDER); } catch {}
-  }
-})();
-
 export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const [activeCat,     setActiveCat]     = useState("burgers");
   const [search,        setSearch]        = useState("");
@@ -2349,61 +2301,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     return () => supabase.removeChannel(channel);
   }, []);
 
-  // Auto-verify resumed order status on mount.
-  // Only runs for orders older than 2 minutes. Fresh orders (just placed)
-  // cannot be ghost orders — the insert either succeeded (we would see the
-  // tracker) or failed (the error screen would have shown). More importantly,
-  // Supabase/PostgREST has a brief propagation delay before a freshly-inserted
-  // row is readable via SELECT, so running this immediately after insert gives
-  // false-positive PGRST116 errors that nuke perfectly real orders.
-  // The tracker's own 10-second polling handles status sync for fresh orders.
-  useEffect(() => {
-    if (!placed || !SUPABASE_READY) return;
 
-    const ageMs = Date.now() - new Date(placed.created_at).getTime();
-    // Skip verify entirely for orders placed in the last 2 minutes.
-    if (ageMs < 2 * 60 * 1000) return;
-
-    // maybeSingle() returns { data: null, error: null } when no rows match,
-    // instead of throwing PGRST116 — cleaner than catching error codes.
-    supabase.from("orders")
-      .select("status, rider_name, rider_phone")
-      .eq("id", placed.id)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (error) {
-          // A network/DB error on THIS verify call — skip, do not nuke the order.
-          console.warn("[bp] Auto-verify fetch failed (skipping):", error?.message);
-          return;
-        }
-        if (!data) {
-          // Order is >2 min old and genuinely not in DB — confirmed ghost.
-          console.warn("[bp] Ghost order confirmed (>2 min, not in DB):", placed.id);
-          lsRemove(LS_ACTIVE_ORDER);
-          sessionStorage.removeItem(SS_ORDER);
-          setPlaced(null);
-          setOrderError({
-            payload: placed,
-            paymentMethod: placed.payment_method,
-            razorpayPaymentId: placed.razorpay_payment_id,
-            wasMissing: true,
-          });
-          return;
-        }
-        // Order found — sync status.
-        const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
-        if (!ACTIVE_STATUSES.has(data.status)) {
-          lsRemove(LS_ACTIVE_ORDER);
-          sessionStorage.removeItem(SS_ORDER);
-          setPlaced(updated);
-        } else {
-          setPlaced(updated);
-          sessionStorage.setItem(SS_ORDER, JSON.stringify(updated));
-          lsSet(LS_ACTIVE_ORDER, JSON.stringify(updated));
-        }
-      });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Fix 4: track whether menu is from DB or fallback cache
   const [menuIsStale, setMenuIsStale] = useState(false);
@@ -2785,43 +2683,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     if (!orderError) return;
     setRetrying(true);
     const { payload } = orderError;
-
-    // For "ghost" orders flagged by auto-verify, first check whether the
-    // original insert actually DID succeed (it was a race-condition false
-    // positive — the DB row just wasn't readable yet when we checked).
-    // If the original exists, resume it rather than inserting a duplicate
-    // that would send two orders to the kitchen.
-    if (orderError.wasMissing && SUPABASE_READY) {
-      try {
-        const { data: existing } = await supabase
-          .from("orders")
-          .select("id, status, rider_name, rider_phone")
-          .eq("id", payload.id)
-          .maybeSingle();
-        if (existing) {
-          // Original IS in DB — it was a false positive. Just resume tracking.
-          const resumed = {
-            ...payload,
-            status: existing.status,
-            rider_name: existing.rider_name,
-            rider_phone: existing.rider_phone,
-          };
-          sessionStorage.setItem(SS_ORDER, JSON.stringify(resumed));
-          lsSet(LS_ACTIVE_ORDER, JSON.stringify(resumed));
-          setOrderError(null);
-          setRetrying(false);
-          setPlaced(resumed);
-          return;
-        }
-      } catch {
-        // DB check failed — fall through to insert below
-      }
-    }
-
-    // Original order confirmed absent — insert a new one.
-    // Use a fresh ID so there is no duplicate-key conflict if the original
-    // row somehow appears between now and the insert.
-    const retryPayload = { ...payload, id: crypto.randomUUID() };
+    // Always use a fresh ID to avoid any duplicate-key conflict
+    const retryPayload = { ...payload, id: crypto.randomUUID(), created_at: new Date().toISOString() };
     try {
       const { error } = await supabase.from("orders").insert(retryPayload);
       if (error) throw error;
@@ -2835,6 +2698,11 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       setPlaced(retryPayload);
     } catch (err) {
       console.warn("[bp] Retry error:", err);
+      setOrderError(prev => ({
+        ...prev,
+        debugMessage: err?.message || String(err),
+        debugCode: err?.code || null,
+      }));
       setRetrying(false);
     }
   };
@@ -2849,9 +2717,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         </div>
         <div>
           <p className="font-black text-stone-800 text-xl mb-2">
-            {paidOnline ? "Payment captured — but order didn't save"
-              : orderError.wasMissing ? "That order never actually went through"
-              : "Order couldn't be placed"}
+            {paidOnline ? "Payment captured — but order didn't save" : "Order couldn't be placed"}
           </p>
           {paidOnline ? (
             <div className="bg-white border border-red-200 rounded-2xl px-4 py-3 max-w-xs mx-auto mb-2">
@@ -2859,8 +2725,6 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
               <p className="text-xs text-stone-600">Payment ID: <span className="font-mono font-bold text-stone-800">{orderError.razorpayPaymentId}</span></p>
               <p className="text-xs text-stone-500 mt-1">Screenshot this and call us — we'll confirm your order manually.</p>
             </div>
-          ) : orderError.wasMissing ? (
-            <p className="text-sm text-stone-500">It looked placed on your screen, but the kitchen never got it — likely a dropped connection right when you ordered. Nothing was charged. Please try again.</p>
           ) : (
             <>
               <p className="text-sm text-stone-500">Check your connection and try again — your cart is still saved.</p>
@@ -2881,13 +2745,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         <a href="tel:+919194008822" className="flex items-center gap-2 border border-orange-200 text-orange-600 font-bold text-sm px-6 py-3 rounded-2xl">
           <Phone size={14} /> Call Restaurant
         </a>
-        {/* wasMissing = cart already cleared before ghost was detected, nothing to go back to.
-             Regular errors keep the cart intact so going back is useful. */}
-        {!paidOnline && !orderError.wasMissing && (
+        {!paidOnline && (
           <button onClick={() => setOrderError(null)} className="text-xs text-stone-400 underline">Go back to cart</button>
-        )}
-        {orderError.wasMissing && (
-          <button onClick={() => { setOrderError(null); lsRemove(LS_CART); window.location.reload(); }} className="text-xs text-stone-400 underline">Start a new order</button>
         )}
       </div>
     );
