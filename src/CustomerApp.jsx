@@ -2302,45 +2302,51 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   }, []);
 
   // Auto-verify resumed order status on mount.
-  // This is the safety net for the "persist to storage before the insert
-  // finishes" trick above: if that insert had actually failed (or the
-  // customer reloaded instead of tapping "Try Again" on the error screen),
-  // the local copy would otherwise sit there forever showing a fake
-  // "Order Placed" tracker for an order the kitchen never received.
+  // Only runs for orders older than 2 minutes. Fresh orders (just placed)
+  // cannot be ghost orders — the insert either succeeded (we would see the
+  // tracker) or failed (the error screen would have shown). More importantly,
+  // Supabase/PostgREST has a brief propagation delay before a freshly-inserted
+  // row is readable via SELECT, so running this immediately after insert gives
+  // false-positive PGRST116 errors that nuke perfectly real orders.
+  // The tracker's own 10-second polling handles status sync for fresh orders.
   useEffect(() => {
     if (!placed || !SUPABASE_READY) return;
-    supabase.from("orders").select("status, rider_name, rider_phone").eq("id", placed.id).single()
+
+    const ageMs = Date.now() - new Date(placed.created_at).getTime();
+    // Skip verify entirely for orders placed in the last 2 minutes.
+    if (ageMs < 2 * 60 * 1000) return;
+
+    // maybeSingle() returns { data: null, error: null } when no rows match,
+    // instead of throwing PGRST116 — cleaner than catching error codes.
+    supabase.from("orders")
+      .select("status, rider_name, rider_phone")
+      .eq("id", placed.id)
+      .maybeSingle()
       .then(({ data, error }) => {
         if (error) {
-          // PGRST116 = no rows matched — this order genuinely does not exist
-          // in the database (the original insert never actually succeeded).
-          // Clear the stale local copy and tell the customer honestly,
-          // instead of leaving them staring at a tracker for a "ghost" order.
-          if (error.code === "PGRST116") {
-            console.warn("[bp] Resumed order not found in DB — clearing stale local copy:", placed.id);
-            lsRemove(LS_ACTIVE_ORDER);
-            sessionStorage.removeItem(SS_ORDER);
-            setPlaced(null);
-            setOrderError({
-              payload: placed,
-              paymentMethod: placed.payment_method,
-              razorpayPaymentId: placed.razorpay_payment_id,
-              wasMissing: true, // distinct message — this wasn't a fresh failure, it never actually saved
-            });
-          }
-          // Any other error here is most likely a network blip on THIS
-          // verify call specifically — don't nuke a perfectly good order
-          // just because this one check failed to reach the server.
+          // A network/DB error on THIS verify call — skip, do not nuke the order.
+          console.warn("[bp] Auto-verify fetch failed (skipping):", error?.message);
           return;
         }
-        if (!data) return;
-        const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
-        if (!ACTIVE_STATUSES.has(data.status)) {
-          // Terminal (served / cancelled) — clear persisted copies NOW so a subsequent
-          // refresh doesn't load a stale "dispatched" status and flash the wrong screen.
+        if (!data) {
+          // Order is >2 min old and genuinely not in DB — confirmed ghost.
+          console.warn("[bp] Ghost order confirmed (>2 min, not in DB):", placed.id);
           lsRemove(LS_ACTIVE_ORDER);
           sessionStorage.removeItem(SS_ORDER);
-          // Still update state so OrderTracker can render the correct done/cancelled screen.
+          setPlaced(null);
+          setOrderError({
+            payload: placed,
+            paymentMethod: placed.payment_method,
+            razorpayPaymentId: placed.razorpay_payment_id,
+            wasMissing: true,
+          });
+          return;
+        }
+        // Order found — sync status.
+        const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
+        if (!ACTIVE_STATUSES.has(data.status)) {
+          lsRemove(LS_ACTIVE_ORDER);
+          sessionStorage.removeItem(SS_ORDER);
           setPlaced(updated);
         } else {
           setPlaced(updated);
@@ -2731,7 +2737,42 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     if (!orderError) return;
     setRetrying(true);
     const { payload } = orderError;
-    // Use a fresh ID on retry so there's no duplicate-key conflict
+
+    // For "ghost" orders flagged by auto-verify, first check whether the
+    // original insert actually DID succeed (it was a race-condition false
+    // positive — the DB row just wasn't readable yet when we checked).
+    // If the original exists, resume it rather than inserting a duplicate
+    // that would send two orders to the kitchen.
+    if (orderError.wasMissing && SUPABASE_READY) {
+      try {
+        const { data: existing } = await supabase
+          .from("orders")
+          .select("id, status, rider_name, rider_phone")
+          .eq("id", payload.id)
+          .maybeSingle();
+        if (existing) {
+          // Original IS in DB — it was a false positive. Just resume tracking.
+          const resumed = {
+            ...payload,
+            status: existing.status,
+            rider_name: existing.rider_name,
+            rider_phone: existing.rider_phone,
+          };
+          sessionStorage.setItem(SS_ORDER, JSON.stringify(resumed));
+          lsSet(LS_ACTIVE_ORDER, JSON.stringify(resumed));
+          setOrderError(null);
+          setRetrying(false);
+          setPlaced(resumed);
+          return;
+        }
+      } catch {
+        // DB check failed — fall through to insert below
+      }
+    }
+
+    // Original order confirmed absent — insert a new one.
+    // Use a fresh ID so there is no duplicate-key conflict if the original
+    // row somehow appears between now and the insert.
     const retryPayload = { ...payload, id: crypto.randomUUID() };
     try {
       const { error } = await supabase.from("orders").insert(retryPayload);
@@ -2739,8 +2780,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       saveHistory(retryPayload);
       sessionStorage.setItem(SS_ORDER, JSON.stringify(retryPayload));
       lsSet(LS_ACTIVE_ORDER, JSON.stringify(retryPayload));
-      // Clear error + cart, then show tracker — same order as finaliseOrder's success path
-      setCart([]);       // clear cart first
+      setCart([]);
       setOrderError(null);
       setRetrying(false);
       setPlacing(false);
@@ -2793,8 +2833,13 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         <a href="tel:+919194008822" className="flex items-center gap-2 border border-orange-200 text-orange-600 font-bold text-sm px-6 py-3 rounded-2xl">
           <Phone size={14} /> Call Restaurant
         </a>
-        {!paidOnline && (
+        {/* wasMissing = cart already cleared before ghost was detected, nothing to go back to.
+             Regular errors keep the cart intact so going back is useful. */}
+        {!paidOnline && !orderError.wasMissing && (
           <button onClick={() => setOrderError(null)} className="text-xs text-stone-400 underline">Go back to cart</button>
+        )}
+        {orderError.wasMissing && (
+          <button onClick={() => { setOrderError(null); lsRemove(LS_CART); window.location.reload(); }} className="text-xs text-stone-400 underline">Start a new order</button>
         )}
       </div>
     );
