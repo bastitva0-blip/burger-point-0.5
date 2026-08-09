@@ -13,7 +13,7 @@ import {
 import { supabase } from "./supabase.js";
 import {
   CATEGORIES, DEFAULT_MENU, ALL_ITEMS, SUPABASE_READY,
-  clearTableSession, getTrackerSteps, STATUS_CFG,
+  clearTableSession, getTrackerSteps, STATUS_CFG, isOrderActive,
   REVIEW_URL, WHATSAPP, INSTAGRAM,
 } from "./constants.js";
 import { haversineKm, calculateDelivery } from "./deliveryUtils.js";
@@ -2566,6 +2566,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const finaliseOrder = async (opts, paymentMethod, razorpayPaymentId = null) => {
     const { note, total, discount, promoCode, deliveryFee, packingCharge, gstAmount, distanceKm } = opts;
     setShowRazorpay(null); setPlacing(true); setOrderError(null);
+    const newItems = cart.map(i => ({ name: i.name, selectedVariant: i.selectedVariant || null, finalPrice: i.finalPrice, qty: i.qty, addonLabels: i.addonLabels || [] }));
     const payload = {
       id: opts._orderId || crypto.randomUUID(),
       table_code: code || null,
@@ -2576,7 +2577,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       delivery_address: customerInfo?.address || null,
       payment_method: paymentMethod || "Cash",
       razorpay_payment_id: razorpayPaymentId || null,
-      items: cart.map(i => ({ name: i.name, selectedVariant: i.selectedVariant || null, finalPrice: i.finalPrice, qty: i.qty, addonLabels: i.addonLabels || [] })),
+      items: newItems,
       total, note: note || "", status: "pending",
       discount: discount || 0, promo_code: promoCode || null,
       delivery_fee: deliveryFee || 0, packing_charge: packingCharge || 0, gst_amount: gstAmount || 0,
@@ -2584,6 +2585,65 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       customer_lat: customerInfo?.lat ?? null, customer_lng: customerInfo?.lng ?? null,
       created_at: new Date().toISOString(),
     };
+
+    // ── Merge onto an existing open order instead of creating a new one ──
+    // If this table (dine-in) or this customer (takeaway) already has an
+    // order that isn't finished yet, fold the new items into that same row
+    // — one ticket, one bill — rather than spawning a second order. Delivery
+    // is excluded: each delivery run is its own dispatch, never merged.
+    let mergedInto = null;
+    if (SUPABASE_READY && orderType !== "delivery") {
+      try {
+        let q = supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(1);
+        if (orderType === "dine-in" && code) {
+          q = q.eq("table_code", code);
+        } else if (orderType === "takeaway" && customerInfo?.phone) {
+          q = q.eq("order_type", "takeaway").eq("customer_phone", customerInfo.phone);
+        } else {
+          q = null;
+        }
+        if (q) {
+          const { data: candidates } = await q;
+          const existing = (candidates || [])[0];
+          // Only merge into orders still genuinely open, and (for takeaway)
+          // only if it's recent — don't glue today's order onto a stale one.
+          const recentEnough = !existing || orderType !== "takeaway"
+            || (Date.now() - new Date(existing.created_at).getTime()) < 3 * 60 * 60 * 1000;
+          if (existing && recentEnough && isOrderActive(existing)) {
+            const mergedItems = [...(existing.items || []), ...newItems];
+            const mergedTotal = Number(existing.total || 0) + Number(total || 0);
+            const mergedNote = [existing.note, note].filter(Boolean).join(" | ");
+            // If the previous ticket was already served, new items mean the
+            // kitchen has work again — bump it back to "pending" so it pops
+            // back into the Orders tab. If it's still cooking, leave status as-is.
+            const nextStatus = existing.status === "served" ? "pending" : existing.status;
+            const updatePayload = {
+              items: mergedItems, total: mergedTotal, note: mergedNote,
+              status: nextStatus,
+            };
+            const { data: updated, error } = await supabase.from("orders")
+              .update(updatePayload).eq("id", existing.id).select().single();
+            if (error) throw error;
+            mergedInto = updated || { ...existing, ...updatePayload };
+          }
+        }
+      } catch (err) {
+        console.warn("[bp] merge check failed, placing as a new order instead:", err?.message);
+        mergedInto = null; // fall through to normal insert below
+      }
+    }
+
+    if (mergedInto) {
+      sessionStorage.setItem(SS_ORDER, JSON.stringify(mergedInto));
+      lsSet(LS_ACTIVE_ORDER, JSON.stringify(mergedInto));
+      saveHistory(mergedInto);
+      setTimeout(() => {
+        setCart([]); setPlacing(false);
+        setPlaced(mergedInto);
+      }, 800);
+      return;
+    }
+
     // Fix 2b: persist order to localStorage BEFORE the insert attempt
     // so a page-refresh during the placing spinner always finds the order
     sessionStorage.setItem(SS_ORDER, JSON.stringify(payload));
