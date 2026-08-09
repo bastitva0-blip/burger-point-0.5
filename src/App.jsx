@@ -6,6 +6,7 @@ import {
 } from "./CustomerApp.jsx";
 import AdminApp from "./AdminApp.jsx";
 import RiderApp from "./RiderApp.jsx";
+import { ErrorBoundary } from "./ErrorBoundary.jsx";
 
 export default function App() {
   const [route,         setRoute]         = useState(getRoute);
@@ -24,13 +25,18 @@ export default function App() {
 
   const { page, code, label } = route;
 
-  if (page === "admin")       return <AdminApp />;
-  if (page === "rider")       return <RiderApp />;
-  if (page === "privacy")     return <PrivacyPage />;
-  if (page === "contact")     return <ContactPage />;
-  if (page === "reservation") return <ReservationPage />;
-  if (page === "takeaway")    return <CustomerApp orderType="takeaway" />;
-  if (page === "delivery")    return <CustomerApp orderType="delivery" />;
-  if (page === "customer")    return <CustomerApp code={code} tableLabel={label} orderType="dine-in" />;
-  return <LandingPage installPrompt={installPrompt} />;
+  const content = (() => {
+    if (page === "admin")       return <AdminApp />;
+    if (page === "rider")       return <RiderApp />;
+    if (page === "privacy")     return <PrivacyPage />;
+    if (page === "contact")     return <ContactPage />;
+    if (page === "reservation") return <ReservationPage />;
+    if (page === "takeaway")    return <CustomerApp orderType="takeaway" />;
+    if (page === "delivery")    return <CustomerApp orderType="delivery" />;
+    if (page === "customer")    return <CustomerApp code={code} tableLabel={label} orderType="dine-in" />;
+    return <LandingPage installPrompt={installPrompt} />;
+  })();
+
+  const boundaryLabel = page === "admin" ? "Admin dashboard" : page === "rider" ? "Rider app" : "This page";
+  return <ErrorBoundary label={boundaryLabel}>{content}</ErrorBoundary>;
 }
