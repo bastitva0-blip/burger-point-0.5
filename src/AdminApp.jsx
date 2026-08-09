@@ -672,10 +672,8 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
     : null;
 
   // ── Pop-in flash when new items get merged onto this order ──────────
-  // A customer adding more items to an existing table/takeaway order updates
-  // this same row (see CustomerApp merge logic) rather than creating a new
-  // one, so the bill stays single. This just gives a brief visual "pop" so
-  // staff notice the ticket grew, without the order disappearing/reappearing.
+  // Fires once staff approve a pending add-on request below — items grows
+  // on this same row, so this just gives a brief visual "pop" to notice it.
   const prevItemCountRef = useRef(order.items?.length || 0);
   const [justMerged, setJustMerged] = useState(false);
   useEffect(() => {
@@ -689,6 +687,40 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
     }
     prevItemCountRef.current = count;
   }, [order.items?.length]);
+
+  // ── Add-on request — customer used "Add More Items" on an order that's
+  // already placed. Staff must approve before it joins the bill. Auto-open
+  // the card so this is impossible to miss.
+  const pendingAddon = order.pending_addon_items && order.pending_addon_items.length > 0
+    ? order.pending_addon_items : null;
+  const prevHadAddonRef = useRef(!!pendingAddon);
+  useEffect(() => {
+    if (pendingAddon && !prevHadAddonRef.current) setOpen(true);
+    prevHadAddonRef.current = !!pendingAddon;
+  }, [pendingAddon]);
+
+  async function approveAddon() {
+    if (!SUPABASE_READY || !pendingAddon) return;
+    const mergedItems = [...(order.items || []), ...pendingAddon];
+    const mergedTotal = Number(order.total || 0) + Number(order.pending_addon_total || 0);
+    // If the ticket had already been served, new items mean the kitchen
+    // has work again — bump it back to "pending" so it re-enters the
+    // active queue. If it's still cooking, leave the status as-is.
+    const nextStatus = order.status === "served" ? "pending" : order.status;
+    const { error } = await supabase.from("orders").update({
+      items: mergedItems, total: mergedTotal, status: nextStatus,
+      pending_addon_items: null, pending_addon_total: null, addon_requested_at: null,
+    }).eq("id", order.id);
+    if (error) console.warn("[bp] approve add-on failed:", error.message);
+  }
+
+  async function declineAddon() {
+    if (!SUPABASE_READY || !pendingAddon) return;
+    const { error } = await supabase.from("orders").update({
+      pending_addon_items: null, pending_addon_total: null, addon_requested_at: null,
+    }).eq("id", order.id);
+    if (error) console.warn("[bp] decline add-on failed:", error.message);
+  }
 
   return (
     <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden mb-3 transition-all duration-500 ${justMerged ? "ring-4 ring-amber-300 scale-[1.01] shadow-lg" : ""} ${isAddOn ? "border-amber-400 border-2" : isUnconfirmed ? "border-red-300 border-2" : "border-stone-100"}`}>
@@ -719,6 +751,11 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
                 🆕 Items Added
               </span>
             )}
+            {pendingAddon && (
+              <span className="text-[10px] font-black text-white bg-purple-600 px-2 py-0.5 rounded-full flex-shrink-0 flex items-center gap-0.5 animate-pulse">
+                🔔 Wants to add items
+              </span>
+            )}
           </div>
           {stillOpenReason && (
             <p className="text-[10px] text-amber-600 font-semibold mt-0.5">⚠️ {stillOpenReason}</p>
@@ -735,6 +772,37 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
 
       {open && (
         <div className="border-t border-stone-100 px-4 pb-4">
+          {/* Pending add-on request — needs approval before it joins the bill */}
+          {pendingAddon && (
+            <div className="mt-3 bg-purple-50 border-2 border-purple-300 rounded-2xl p-3">
+              <p className="text-xs font-black text-purple-700 flex items-center gap-1.5">
+                🔔 {order.table_label || order.customer_name || "This customer"} wants to add these to their current order:
+              </p>
+              <div className="mt-2 mb-2">
+                {pendingAddon.map((it, i) => (
+                  <div key={i} className="flex justify-between text-sm py-0.5">
+                    <span className="text-stone-700">{it.name}{it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×{it.qty}</span>
+                    <span className="text-stone-500 font-semibold">{currency(it.finalPrice * it.qty)}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between text-xs font-bold text-purple-700 pt-1 border-t border-purple-200 mt-1">
+                  <span>Add-on total</span><span>+{currency(order.pending_addon_total)}</span>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={approveAddon}
+                  className="flex-1 py-2 rounded-xl text-xs font-bold bg-purple-600 text-white active:scale-95 transition-transform">
+                  ✅ Approve — add to bill
+                </button>
+                <button onClick={declineAddon}
+                  className="px-3 py-2 rounded-xl text-xs font-bold border border-purple-300 text-purple-600 active:scale-95 transition-transform">
+                  ✕ Decline
+                </button>
+              </div>
+              <p className="text-[10px] text-purple-400 mt-2">Once approved, both the original and new items show together — on one bill.</p>
+            </div>
+          )}
+
           {/* Items */}
           <div className="py-3">
             {order.items.map((it, i) => (
