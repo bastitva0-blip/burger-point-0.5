@@ -4186,7 +4186,13 @@ export default function AdminApp() {
         }
       });
 
-    const autoRefresh = setInterval(() => fetchOrders(), 2 * 60 * 1000); return () => { clearFallback(); supabase.removeChannel(ch); clearInterval(autoRefresh); };
+    // Poll every 5s as a safety net alongside Realtime — if the Supabase
+    // project's "orders" table doesn't have Realtime replication turned on
+    // (Database → Replication → supabase_realtime → toggle "orders"),
+    // updates like a customer's "Add More Items" request would otherwise
+    // only show up on the next 2-minute refresh or a manual tap. 5s makes
+    // it feel near-instant either way, Realtime-on or not.
+    const autoRefresh = setInterval(() => fetchOrders(), 5000); return () => { clearFallback(); supabase.removeChannel(ch); clearInterval(autoRefresh); };
   }, [authed, fetchOrders]);
 
   const updateStatus = async (id, status, extra = {}) => {
