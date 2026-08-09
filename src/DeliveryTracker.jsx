@@ -324,6 +324,17 @@ function DetailsPanel({ order, riderName, riderPhone, etaMin, isDelivered, hasRi
           )}
         </div>
 
+        {/* Add More Items — only before rider is assigned */}
+        {!hasRider && !isDelivered && (
+          <div className="pt-2 pb-2">
+            <button onClick={onNewOrder}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform">
+              <span className="text-lg">➕</span> Add More Items
+            </button>
+            <p className="text-center text-[10px] text-stone-400 mt-1.5">Want to add to your order? Place it before a rider is assigned.</p>
+          </div>
+        )}
+
         {/* Delivered CTA */}
         {isDelivered && (
           <div className="pt-2 pb-4" style={{ animation: "dtSlideUp 0.3s ease-out" }}>
