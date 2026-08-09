@@ -54,13 +54,30 @@ export const STATUS_CFG = {
   accepted:   { label:"Preparing",        color:"bg-orange-100 text-orange-700", icon:"👨‍🍳" },
   ready:      { label:"Ready! 🎉",        color:"bg-green-100 text-green-700",   icon:"✅" },
   dispatched: { label:"Out for Delivery", color:"bg-purple-100 text-purple-700", icon:"🛵" },
-  served:     { label:"Completed",        color:"bg-stone-100 text-stone-500",   icon:"😊" },
+  served:     { label:"Served",           color:"bg-amber-100 text-amber-700",   icon:"😊" },
+  completed:  { label:"Completed",        color:"bg-stone-100 text-stone-500",   icon:"🏁" },
   cancelled:  { label:"Cancelled",        color:"bg-red-100 text-red-600",       icon:"✕" },
 };
 
 // Orders still needing kitchen/floor attention — shown on the Orders tab.
-// "served" and "cancelled" are historical and live in Sales instead.
-export const ACTIVE_STATUSES = ["pending", "accepted", "ready", "dispatched"];
+// NOTE: "served" is only truly final for delivery (food handed over = done).
+// For dine-in/takeaway, "served" means food is out / handed over but the
+// guest is still at the table (dine-in) or the bill/handover isn't
+// confirmed closed yet (takeaway) — so it stays active until "completed".
+export const ACTIVE_STATUSES = ["pending", "accepted", "ready", "dispatched", "served"];
+
+// Is this order still something staff need to act on / track?
+// (delivery's "served" = actually delivered = done; everything else's
+// "served" still needs a final "Clear Table" / "Complete & Close Bill" step.)
+export const isOrderActive = (order) => {
+  if (!order) return false;
+  if (order.status === "cancelled" || order.status === "completed") return false;
+  if (order.status === "served" && order.order_type === "delivery") return false;
+  return true;
+};
+
+// Inverse convenience — order is fully done, no further action possible.
+export const isOrderTerminal = (order) => !isOrderActive(order);
 
 // Preset cancellation reasons — shown to admin when cancelling, and to the customer's tracker.
 export const CANCEL_REASONS = [
@@ -80,6 +97,14 @@ export const getNextStep = (order) => {
     return { next:"served", label: order_type==="takeaway" ? "Mark Collected" : "Mark Served" };
   }
   if (status==="dispatched") return { next:"served", label:"Mark Delivered ✅" };
+  // Extra step after "served" for dine-in/takeaway — food's out, but the
+  // guest is still at the table, or the handover/bill isn't confirmed
+  // closed. Delivery's "served" is already final (skipped by the check above).
+  if (status==="served" && order_type!=="delivery") {
+    return order_type==="takeaway"
+      ? { next:"completed", label:"✅ Complete & Close Bill" }
+      : { next:"completed", label:"🪑 Clear Table (Guest Left)" };
+  }
   return null;
 };
 
@@ -92,16 +117,18 @@ export const getTrackerSteps = (ot) => {
     { key:"served",     label:"Delivered ✅",        sub:"Enjoy your meal!",          icon:"😊" },
   ];
   if (ot==="takeaway") return [
-    { key:"pending",  label:"Order Placed",         sub:"We received your order",    icon:"📋" },
-    { key:"accepted", label:"Accepted",             sub:"Preparing your food 👨‍🍳",  icon:"🍳" },
-    { key:"ready",    label:"Ready to Collect 🎉",  sub:"Please collect at counter", icon:"✅" },
-    { key:"served",   label:"Collected",            sub:"Thank you! Enjoy!",         icon:"😊" },
+    { key:"pending",   label:"Order Placed",         sub:"We received your order",    icon:"📋" },
+    { key:"accepted",  label:"Accepted",             sub:"Preparing your food 👨‍🍳",  icon:"🍳" },
+    { key:"ready",     label:"Ready to Collect 🎉",  sub:"Please collect at counter", icon:"✅" },
+    { key:"served",    label:"Collected",            sub:"Thank you! Enjoy!",         icon:"😊" },
+    { key:"completed", label:"Closed",               sub:"Bill settled — see you again!", icon:"🏁" },
   ];
   return [
-    { key:"pending",  label:"Order Placed",   sub:"Kitchen has been notified",       icon:"📋" },
-    { key:"accepted", label:"Accepted",       sub:"Preparing your food 👨‍🍳",        icon:"🍳" },
-    { key:"ready",    label:"Ready! 🎉",      sub:"Coming to your table soon",       icon:"✅" },
-    { key:"served",   label:"Served",         sub:"Enjoy your meal!",                icon:"😊" },
+    { key:"pending",   label:"Order Placed",   sub:"Kitchen has been notified",       icon:"📋" },
+    { key:"accepted",  label:"Accepted",       sub:"Preparing your food 👨‍🍳",        icon:"🍳" },
+    { key:"ready",     label:"Ready! 🎉",      sub:"Coming to your table soon",       icon:"✅" },
+    { key:"served",    label:"Served",         sub:"Enjoy your meal!",                icon:"😊" },
+    { key:"completed", label:"Table Cleared",  sub:"Thanks for visiting!",            icon:"🏁" },
   ];
 };
 
