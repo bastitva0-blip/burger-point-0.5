@@ -2710,7 +2710,13 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         console.warn("[bp] Order save error:", err);
         setPlacing(false);
         // Fix 2: show error card — do NOT clear cart; keep LS so tracker survives refresh
-        setOrderError({ payload, paymentMethod, razorpayPaymentId });
+        setOrderError({
+          payload, paymentMethod, razorpayPaymentId,
+          // Surface the real Postgres/Supabase error on-screen (not just console)
+          // so this is actually debuggable from a phone instead of guessing.
+          debugMessage: err?.message || String(err),
+          debugCode: err?.code || null,
+        });
         return;
       }
     }
@@ -2768,7 +2774,16 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           ) : orderError.wasMissing ? (
             <p className="text-sm text-stone-500">It looked placed on your screen, but the kitchen never got it — likely a dropped connection right when you ordered. Nothing was charged. Please try again.</p>
           ) : (
-            <p className="text-sm text-stone-500">Check your connection and try again — your cart is still saved.</p>
+            <>
+              <p className="text-sm text-stone-500">Check your connection and try again — your cart is still saved.</p>
+              {orderError.debugMessage && (
+                <div className="bg-white border border-red-200 rounded-xl px-3 py-2 mt-3 max-w-xs mx-auto text-left">
+                  <p className="text-[10px] font-bold text-red-500 uppercase tracking-wide">Error details (send this to support)</p>
+                  {orderError.debugCode && <p className="text-[11px] font-mono text-stone-600 mt-1">Code: {orderError.debugCode}</p>}
+                  <p className="text-[11px] font-mono text-stone-600 mt-0.5 break-words">{orderError.debugMessage}</p>
+                </div>
+              )}
+            </>
           )}
         </div>
         <button onClick={retryOrder} disabled={retrying}
