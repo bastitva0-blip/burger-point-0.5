@@ -1740,6 +1740,34 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
             🛒 New Order
           </button>
         )}
+        {/* Escape hatch — clears stuck orders without support intervention */}
+        <details className="mt-5 group">
+          <summary className="text-xs text-stone-400 text-center cursor-pointer select-none list-none flex items-center justify-center gap-1 hover:text-stone-500 transition-colors">
+            <span className="group-open:hidden">🤔 Something wrong with this screen?</span>
+            <span className="hidden group-open:inline">▲ Hide</span>
+          </summary>
+          <div className="mt-3 bg-stone-50 border border-stone-200 rounded-2xl p-4 text-center">
+            <p className="text-xs text-stone-500 mb-3 leading-relaxed">
+              If this screen is stuck or showing an old order, you can clear it and start fresh. Your order is safe — this only affects what's shown on your device.
+            </p>
+            <button
+              onClick={() => {
+                lsRemove(LS_ACTIVE_ORDER);
+                sessionStorage.removeItem(SS_ORDER);
+                onNewOrder();
+              }}
+              className="w-full py-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs font-bold active:scale-95 transition-transform"
+            >
+              🔄 Clear stuck screen & go to menu
+            </button>
+            <a href="https://wa.me/919194008822?text=Hi%2C%20my%20order%20screen%20is%20stuck%20on%20Burger%20Point%20app."
+              target="_blank" rel="noreferrer"
+              className="mt-2 block text-xs text-green-700 font-semibold py-2">
+              💬 Or WhatsApp us for help
+            </a>
+          </div>
+        </details>
+
         <div className="mt-4 flex gap-3 justify-center">
           <button onClick={() => window.location.hash = "privacy"} className="text-xs text-stone-400 underline">Privacy Policy</button>
           <button onClick={() => window.location.hash = "contact"} className="text-xs text-stone-400 underline">Contact Us</button>
@@ -2193,6 +2221,26 @@ function PushBanner({ onAllow, onDismiss }) {
 // Cart persistence — module-level so they're never recreated on render
 const LS_CART  = "bp_cart_v2";
 const CART_TTL = 2 * 60 * 60 * 1000; // 2 hours
+
+// ── Boot-time stale-order cleanup ────────────────────────
+// Runs once at module evaluation (before any component mounts).
+// Any LS_ACTIVE_ORDER older than 24 h is silently wiped — no DB call needed.
+const ACTIVE_ORDER_TTL = 24 * 60 * 60 * 1000; // 24 hours
+;(() => {
+  try {
+    const raw = localStorage.getItem(LS_ACTIVE_ORDER);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const age = Date.now() - new Date(parsed?.created_at ?? 0).getTime();
+    if (age > ACTIVE_ORDER_TTL) {
+      localStorage.removeItem(LS_ACTIVE_ORDER);
+      sessionStorage.removeItem(SS_ORDER);
+    }
+  } catch {
+    // corrupt entry — clear it
+    try { localStorage.removeItem(LS_ACTIVE_ORDER); } catch {}
+  }
+})();
 
 export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const [activeCat,     setActiveCat]     = useState("burgers");
