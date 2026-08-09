@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { supabase } from "./supabase.js";
 import { SUPABASE_READY, STATUS_CFG, getNextStep, CATEGORIES, DEFAULT_MENU, ALL_ITEMS, TABLE_CODES,
-  CANCEL_REASONS, ACTIVE_STATUSES,
+  CANCEL_REASONS, ACTIVE_STATUSES, isOrderActive, isOrderTerminal,
 } from "./constants.js";
 import { useBusinessSettings } from "./useBusinessSettings.js";
 
@@ -659,11 +659,39 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
   const cfg = STATUS_CFG[order.status] || STATUS_CFG.pending;
   const typeEmoji = order.order_type === "delivery" ? "🛵" : order.order_type === "takeaway" ? "📦" : "🍽️";
   const isUnconfirmed = order.status === "pending";
-  // Terminal statuses — no actions allowed at all
-  const isTerminal = order.status === "cancelled" || order.status === "served";
+  // Terminal statuses — no actions allowed at all. NOTE: for dine-in/takeaway,
+  // "served" is NOT terminal — the guest may still be at the table (dine-in)
+  // or the bill isn't confirmed closed yet (takeaway), so the order stays
+  // active until the extra "Clear Table" / "Complete & Close Bill" step.
+  const isTerminal = isOrderTerminal(order);
+  // Why this served-but-not-done order is still showing up / table still occupied.
+  const stillOpenReason = order.status === "served" && order.order_type !== "delivery"
+    ? (order.order_type === "takeaway"
+        ? "Collected — bill not confirmed closed yet."
+        : "Table isn't empty yet — guest may still be seated.")
+    : null;
+
+  // ── Pop-in flash when new items get merged onto this order ──────────
+  // A customer adding more items to an existing table/takeaway order updates
+  // this same row (see CustomerApp merge logic) rather than creating a new
+  // one, so the bill stays single. This just gives a brief visual "pop" so
+  // staff notice the ticket grew, without the order disappearing/reappearing.
+  const prevItemCountRef = useRef(order.items?.length || 0);
+  const [justMerged, setJustMerged] = useState(false);
+  useEffect(() => {
+    const count = order.items?.length || 0;
+    if (count > prevItemCountRef.current) {
+      setOpen(true);
+      setJustMerged(true);
+      const t = setTimeout(() => setJustMerged(false), 1800);
+      prevItemCountRef.current = count;
+      return () => clearTimeout(t);
+    }
+    prevItemCountRef.current = count;
+  }, [order.items?.length]);
 
   return (
-    <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden mb-3 ${isAddOn ? "border-amber-400 border-2" : isUnconfirmed ? "border-red-300 border-2" : "border-stone-100"}`}>
+    <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden mb-3 transition-all duration-500 ${justMerged ? "ring-4 ring-amber-300 scale-[1.01] shadow-lg" : ""} ${isAddOn ? "border-amber-400 border-2" : isUnconfirmed ? "border-red-300 border-2" : "border-stone-100"}`}>
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 cursor-pointer" onClick={() => setOpen(o => !o)}>
         <div className="relative">
@@ -686,7 +714,15 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
                 ➕ Add-on
               </span>
             )}
+            {justMerged && (
+              <span className="text-[10px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full flex-shrink-0 flex items-center gap-0.5 animate-bounce">
+                🆕 Items Added
+              </span>
+            )}
           </div>
+          {stillOpenReason && (
+            <p className="text-[10px] text-amber-600 font-semibold mt-0.5">⚠️ {stillOpenReason}</p>
+          )}
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-xs text-stone-400">{order.time}</span>
             {order.customer_phone && <span className="text-xs text-stone-400">{order.customer_phone}</span>}
@@ -1875,7 +1911,12 @@ function MobileBillingTab({ bizSettings }) {
 // ─────────────────────────────────────────────────────────
 function TablesTab({ orders }) {
   const ACTIVE_TABLES = 8; // currently active tables; rest shown as coming soon
-  const ACTIVE = ["pending", "accepted", "ready"];
+  // "served" is included here on purpose — a dine-in table that's been served
+  // still has the guest sitting at it until staff explicitly hit
+  // "Clear Table (Guest Left)", which moves the order to "completed" and
+  // frees the table. Without this, the table showed "Free" the moment food
+  // went out, even though nobody had actually left yet.
+  const ACTIVE = ["pending", "accepted", "ready", "served"];
   const tableMap = {};
   orders.forEach(o => {
     if (o.order_type !== "dine-in" || !o.table_label) return;
@@ -1893,7 +1934,7 @@ function TablesTab({ orders }) {
 
   const activeTables = allTables.slice(0, ACTIVE_TABLES);
   const futureTables = allTables.slice(ACTIVE_TABLES);
-  const statusPriority = { pending: 0, accepted: 1, ready: 2 };
+  const statusPriority = { pending: 0, accepted: 1, ready: 2, served: 3 };
 
   const renderTable = (label, future = false) => {
     const tableOrders = future ? [] : (tableMap[label] || []);
@@ -1903,6 +1944,9 @@ function TablesTab({ orders }) {
           (statusPriority[o.status] ?? 99) < (statusPriority[best] ?? 99) ? o.status : best,
           tableOrders[0].status)
       : null;
+    // At least one order at this table has been served but not yet cleared —
+    // this is the "why is it still occupied" reason shown on the tile.
+    const notEmptyYet = tableOrders.some(o => o.status === "served");
     const total = tableOrders.reduce((s, o) => s + (o.total || 0), 0);
     const cfg = topStatus ? STATUS_CFG[topStatus] : null;
     const numLabel = label.replace(/\D/g, "");
@@ -1921,11 +1965,13 @@ function TablesTab({ orders }) {
       : topStatus === "pending"  ? "bg-blue-50 border-blue-300"
       : topStatus === "accepted" ? "bg-orange-50 border-orange-300"
       : topStatus === "ready"    ? "bg-green-50 border-green-300"
+      : topStatus === "served"   ? "bg-amber-50 border-amber-300"
       : "bg-stone-100 border-stone-200";
     const dotClass = !occupied ? "bg-stone-300"
       : topStatus === "pending"  ? "bg-blue-400 animate-pulse"
       : topStatus === "accepted" ? "bg-orange-400 animate-pulse"
       : topStatus === "ready"    ? "bg-green-400"
+      : topStatus === "served"   ? "bg-amber-400"
       : "bg-stone-300";
 
     return (
@@ -1936,10 +1982,13 @@ function TablesTab({ orders }) {
         {occupied ? (
           <>
             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ${cfg?.color || ""}`}>
-              {cfg?.label || topStatus}
+              {topStatus === "served" ? "🍽️ At Table" : (cfg?.label || topStatus)}
             </span>
             <p className="text-xs font-black text-orange-600">₹{total}</p>
             <p className="text-[9px] text-stone-400">{tableOrders.length} order{tableOrders.length > 1 ? "s" : ""}</p>
+            {notEmptyYet && (
+              <p className="text-[8px] text-amber-600 font-bold text-center leading-tight mt-0.5">Table not empty yet</p>
+            )}
           </>
         ) : (
           <p className="text-[10px] text-stone-400 font-medium mt-1">Free</p>
@@ -1958,6 +2007,7 @@ function TablesTab({ orders }) {
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" /> Order Placed</span>
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-orange-400 inline-block" /> Preparing</span>
         <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-green-400 inline-block" /> Ready</span>
+        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" /> At Table (not cleared)</span>
       </div>
 
       {/* Active tables grid */}
@@ -2641,9 +2691,10 @@ function SalesTab({ orders, loading }) {
   revenueOrders.forEach(o => { typeBreak[o.order_type || "dine-in"] = (typeBreak[o.order_type || "dine-in"] || 0) + 1; });
 
   // History — completed and cancelled orders, most recent first. This is where
-  // orders land once they leave the active Orders tab.
+  // orders land once they leave the active Orders tab. "served" here only
+  // covers delivery (its terminal state); dine-in/takeaway land as "completed".
   const history = orders
-    .filter(o => o.status === "served" || o.status === "cancelled")
+    .filter(o => o.status === "served" || o.status === "completed" || o.status === "cancelled")
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
     .slice(0, 40);
 
@@ -4070,12 +4121,10 @@ export default function AdminApp() {
     const autoRefresh = setInterval(() => fetchOrders(), 2 * 60 * 1000); return () => { clearFallback(); supabase.removeChannel(ch); clearInterval(autoRefresh); };
   }, [authed, fetchOrders]);
 
-  const TERMINAL_STATUSES = new Set(["cancelled", "served"]);
-
   const updateStatus = async (id, status, extra = {}) => {
     // Guard: never push a terminal order forward
     const snapshot = orders.find(o => o.id === id);
-    if (snapshot && TERMINAL_STATUSES.has(snapshot.status)) {
+    if (snapshot && isOrderTerminal(snapshot)) {
       toast.error("This order is already " + snapshot.status + " — no further changes allowed.");
       return;
     }
@@ -4214,9 +4263,10 @@ export default function AdminApp() {
 
   if (!authed) return <LoginScreen onLogin={() => setAuthed(true)} />;
 
-  // Orders tab only shows orders still needing action — served/cancelled
-  // move to the Sales tab as history.
-  let filtered = orders.filter(o => ACTIVE_STATUSES.includes(o.status));
+  // Orders tab shows anything still needing action — including served
+  // dine-in/takeaway orders (guest still at table / bill not closed).
+  // Only cancelled/completed (and delivered "served") move to Sales as history.
+  let filtered = orders.filter(isOrderActive);
   if (filter !== "all")     filtered = filtered.filter(o => o.status === filter);
   if (typeFilter !== "all") filtered = filtered.filter(o => (o.order_type || "dine-in") === typeFilter);
 
@@ -4473,11 +4523,12 @@ export default function AdminApp() {
             ) : (
               <>
                 {(() => {
-                  // Detect tables with multiple active (non-terminal) orders — flag add-ons
-                  const TERMINAL = new Set(["cancelled", "served"]);
+                  // Detect tables with multiple active (non-terminal) orders — flag add-ons.
+                  // (Real merges now happen at order-placement time — see CustomerApp — so
+                  // this is a fallback for any pre-existing split rows.)
                   const activeByTable = {};
                   orders.forEach(o => {
-                    if (!o.table_label || TERMINAL.has(o.status)) return;
+                    if (!o.table_label || !isOrderActive(o)) return;
                     if (!activeByTable[o.table_label]) activeByTable[o.table_label] = [];
                     activeByTable[o.table_label].push(o.id);
                   });
