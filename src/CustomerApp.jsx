@@ -2301,11 +2301,38 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     return () => supabase.removeChannel(channel);
   }, []);
 
-  // Auto-verify resumed order status on mount
+  // Auto-verify resumed order status on mount.
+  // This is the safety net for the "persist to storage before the insert
+  // finishes" trick above: if that insert had actually failed (or the
+  // customer reloaded instead of tapping "Try Again" on the error screen),
+  // the local copy would otherwise sit there forever showing a fake
+  // "Order Placed" tracker for an order the kitchen never received.
   useEffect(() => {
     if (!placed || !SUPABASE_READY) return;
     supabase.from("orders").select("status, rider_name, rider_phone").eq("id", placed.id).single()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) {
+          // PGRST116 = no rows matched — this order genuinely does not exist
+          // in the database (the original insert never actually succeeded).
+          // Clear the stale local copy and tell the customer honestly,
+          // instead of leaving them staring at a tracker for a "ghost" order.
+          if (error.code === "PGRST116") {
+            console.warn("[bp] Resumed order not found in DB — clearing stale local copy:", placed.id);
+            lsRemove(LS_ACTIVE_ORDER);
+            sessionStorage.removeItem(SS_ORDER);
+            setPlaced(null);
+            setOrderError({
+              payload: placed,
+              paymentMethod: placed.payment_method,
+              razorpayPaymentId: placed.razorpay_payment_id,
+              wasMissing: true, // distinct message — this wasn't a fresh failure, it never actually saved
+            });
+          }
+          // Any other error here is most likely a network blip on THIS
+          // verify call specifically — don't nuke a perfectly good order
+          // just because this one check failed to reach the server.
+          return;
+        }
         if (!data) return;
         const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
         if (!ACTIVE_STATUSES.has(data.status)) {
@@ -2728,7 +2755,9 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         </div>
         <div>
           <p className="font-black text-stone-800 text-xl mb-2">
-            {paidOnline ? "Payment captured — but order didn't save" : "Order couldn't be placed"}
+            {paidOnline ? "Payment captured — but order didn't save"
+              : orderError.wasMissing ? "That order never actually went through"
+              : "Order couldn't be placed"}
           </p>
           {paidOnline ? (
             <div className="bg-white border border-red-200 rounded-2xl px-4 py-3 max-w-xs mx-auto mb-2">
@@ -2736,6 +2765,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
               <p className="text-xs text-stone-600">Payment ID: <span className="font-mono font-bold text-stone-800">{orderError.razorpayPaymentId}</span></p>
               <p className="text-xs text-stone-500 mt-1">Screenshot this and call us — we'll confirm your order manually.</p>
             </div>
+          ) : orderError.wasMissing ? (
+            <p className="text-sm text-stone-500">It looked placed on your screen, but the kitchen never got it — likely a dropped connection right when you ordered. Nothing was charged. Please try again.</p>
           ) : (
             <p className="text-sm text-stone-500">Check your connection and try again — your cart is still saved.</p>
           )}
