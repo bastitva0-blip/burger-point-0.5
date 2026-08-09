@@ -6,7 +6,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Home, Clock, User, MapPin, Phone, Package,
   CheckCircle, Navigation2, LogOut, RefreshCw,
-  Search, Eye, EyeOff, Wifi, WifiOff, Bell,
+  Search, Eye, EyeOff, Wifi, WifiOff,
   ChevronDown, ChevronUp, TrendingUp, IndianRupee, Lock,
 } from "lucide-react";
 import { supabase } from "./supabase.js";
@@ -55,8 +55,10 @@ function useRiderNotifications(riderId, currentOrders, authed) {
   const unackedRef              = useRef(new Set());
 
   useEffect(() => {
-    if (authed && "Notification" in window && Notification.permission === "default")
-      Notification.requestPermission();
+    // Native browser Notification permission request removed — it was
+    // crashing the rider app to a blank screen on some mobile browsers/
+    // webviews that don't implement the Notification API cleanly. The
+    // in-app popup + chime + title flash below are enough on their own.
   }, [authed]);
 
   const startFlash = useCallback((n) => {
@@ -93,14 +95,6 @@ function useRiderNotifications(riderId, currentOrders, authed) {
       setPopup(newOnes[0]);
       playRiderChime();
       startFlash(unackedRef.current.size);
-      if ("Notification" in window && Notification.permission === "granted") {
-        const o = newOnes[0];
-        const n = new Notification("🛵 New Delivery — Burger Point", {
-          body: `${o.customer_name || "Customer"} · ${o.delivery_address || ""}`,
-          tag: "bp-rider-order", renotify: true,
-        });
-        setTimeout(() => n.close(), 7000);
-      }
       clearInterval(repeatRef.current);
       repeatRef.current = setInterval(() => {
         if (unackedRef.current.size > 0) { playRiderChime(); startFlash(unackedRef.current.size); }
@@ -156,7 +150,7 @@ function NewOrderPopup({ order, onAck }) {
       }}>
       <div className="bg-white rounded-2xl shadow-2xl border-2 border-orange-500 overflow-hidden">
         <div className="bg-gradient-to-r from-orange-500 to-red-500 px-4 py-3 flex items-center gap-2">
-          <Bell size={16} className="text-white animate-bounce" />
+          <span className="text-lg leading-none">🔔</span>
           <span className="text-white font-black text-sm">🛵 NEW DELIVERY ASSIGNED!</span>
         </div>
         <div className="px-4 py-3">
