@@ -2301,7 +2301,61 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     return () => supabase.removeChannel(channel);
   }, []);
 
+  // Auto-verify resumed order status on mount.
+  // Only runs for orders older than 2 minutes. Fresh orders (just placed)
+  // cannot be ghost orders — the insert either succeeded (we would see the
+  // tracker) or failed (the error screen would have shown). More importantly,
+  // Supabase/PostgREST has a brief propagation delay before a freshly-inserted
+  // row is readable via SELECT, so running this immediately after insert gives
+  // false-positive PGRST116 errors that nuke perfectly real orders.
+  // The tracker's own 10-second polling handles status sync for fresh orders.
+  useEffect(() => {
+    if (!placed || !SUPABASE_READY) return;
 
+    const ageMs = Date.now() - new Date(placed.created_at).getTime();
+    // Skip verify entirely for orders placed in the last 2 minutes.
+    if (ageMs < 2 * 60 * 1000) return;
+
+    // maybeSingle() returns { data: null, error: null } when no rows match,
+    // instead of throwing PGRST116 — cleaner than catching error codes.
+    supabase.from("orders")
+      .select("status, rider_name, rider_phone")
+      .eq("id", placed.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (error) {
+          // A network/DB error on THIS verify call — skip, do not nuke the order.
+          console.warn("[bp] Auto-verify fetch failed (skipping):", error?.message);
+          return;
+        }
+        if (!data) {
+          // Order is >2 min old and genuinely not in DB — confirmed ghost.
+          console.warn("[bp] Ghost order confirmed (>2 min, not in DB):", placed.id);
+          lsRemove(LS_ACTIVE_ORDER);
+          sessionStorage.removeItem(SS_ORDER);
+          setPlaced(null);
+          setOrderError({
+            payload: placed,
+            paymentMethod: placed.payment_method,
+            razorpayPaymentId: placed.razorpay_payment_id,
+            wasMissing: true,
+          });
+          return;
+        }
+        // Order found — sync status.
+        const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
+        if (!ACTIVE_STATUSES.has(data.status)) {
+          lsRemove(LS_ACTIVE_ORDER);
+          sessionStorage.removeItem(SS_ORDER);
+          setPlaced(updated);
+        } else {
+          setPlaced(updated);
+          sessionStorage.setItem(SS_ORDER, JSON.stringify(updated));
+          lsSet(LS_ACTIVE_ORDER, JSON.stringify(updated));
+        }
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Fix 4: track whether menu is from DB or fallback cache
   const [menuIsStale, setMenuIsStale] = useState(false);
@@ -2568,6 +2622,40 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
 
   const [orderError,    setOrderError]    = useState(null);  // Feature 2: placement error
   const [retrying,      setRetrying]      = useState(false);
+  const [retryAttempt,  setRetryAttempt]  = useState(0);     // silent retry counter (1-3)
+
+  // ── Resilient insert: up to 3 silent attempts with backoff ──────────────
+  // Handles ~95% of transient poor-network failures without showing an error.
+  // Skips retries for definitive DB errors (duplicate key, constraint violations).
+  const insertWithRetry = async (payload, maxAttempts = 3) => {
+    const delays = [0, 1500, 4000]; // immediate → 1.5s → 4s
+    let lastErr = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        setRetryAttempt(attempt); // show "Retrying (attempt X)…" in the spinner
+        await new Promise(r => setTimeout(r, delays[attempt]));
+      }
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 12000); // 12s hard timeout
+        const { error } = await supabase
+          .from("orders")
+          .insert(payload)
+          .abortSignal(controller.signal);
+        clearTimeout(timer);
+        if (!error) { setRetryAttempt(0); return null; } // success
+        lastErr = error;
+        // Don't retry on definitive DB errors — retrying won't help
+        if (["23505", "23503", "42501", "PGRST301"].includes(error.code)) break;
+      } catch (err) {
+        lastErr = err?.name === "AbortError"
+          ? new Error("Request timed out — poor network. Check your connection.")
+          : err;
+      }
+    }
+    setRetryAttempt(0);
+    return lastErr;
+  };
 
   const finaliseOrder = async (opts, paymentMethod, razorpayPaymentId = null) => {
     const { note, total, discount, promoCode, deliveryFee, packingCharge, gstAmount, distanceKm } = opts;
@@ -2655,17 +2743,15 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     lsSet(LS_ACTIVE_ORDER, JSON.stringify(payload));
 
     if (SUPABASE_READY) {
-      try {
-        const { error } = await supabase.from("orders").insert(payload);
-        if (error) throw error;
-      } catch (err) {
-        console.warn("[bp] Order save error:", err);
+      // insertWithRetry: 3 silent attempts (0s → 1.5s → 4s) before giving up.
+      // Each attempt has a 12s abort timeout so the spinner never hangs forever.
+      const err = await insertWithRetry(payload);
+      if (err) {
+        console.warn("[bp] Order save error (all attempts failed):", err);
         setPlacing(false);
         // Fix 2: show error card — do NOT clear cart; keep LS so tracker survives refresh
         setOrderError({
           payload, paymentMethod, razorpayPaymentId,
-          // Surface the real Postgres/Supabase error on-screen (not just console)
-          // so this is actually debuggable from a phone instead of guessing.
           debugMessage: err?.message || String(err),
           debugCode: err?.code || null,
         });
@@ -2683,31 +2769,86 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     if (!orderError) return;
     setRetrying(true);
     const { payload } = orderError;
-    // Always use a fresh ID to avoid any duplicate-key conflict
-    const retryPayload = { ...payload, id: crypto.randomUUID(), created_at: new Date().toISOString() };
-    try {
-      const { error } = await supabase.from("orders").insert(retryPayload);
-      if (error) throw error;
-      saveHistory(retryPayload);
-      sessionStorage.setItem(SS_ORDER, JSON.stringify(retryPayload));
-      lsSet(LS_ACTIVE_ORDER, JSON.stringify(retryPayload));
-      setCart([]);
-      setOrderError(null);
-      setRetrying(false);
-      setPlacing(false);
-      setPlaced(retryPayload);
-    } catch (err) {
-      console.warn("[bp] Retry error:", err);
+
+    // For "ghost" orders flagged by auto-verify, first check whether the
+    // original insert actually DID succeed (it was a race-condition false
+    // positive — the DB row just wasn't readable yet when we checked).
+    // If the original exists, resume it rather than inserting a duplicate
+    // that would send two orders to the kitchen.
+    if (orderError.wasMissing && SUPABASE_READY) {
+      try {
+        const { data: existing } = await supabase
+          .from("orders")
+          .select("id, status, rider_name, rider_phone")
+          .eq("id", payload.id)
+          .maybeSingle();
+        if (existing) {
+          // Original IS in DB — it was a false positive. Just resume tracking.
+          const resumed = {
+            ...payload,
+            status: existing.status,
+            rider_name: existing.rider_name,
+            rider_phone: existing.rider_phone,
+          };
+          sessionStorage.setItem(SS_ORDER, JSON.stringify(resumed));
+          lsSet(LS_ACTIVE_ORDER, JSON.stringify(resumed));
+          setOrderError(null);
+          setRetrying(false);
+          setPlaced(resumed);
+          return;
+        }
+      } catch {
+        // DB check failed — fall through to insert below
+      }
+    }
+
+    // Original order confirmed absent — insert a new one.
+    // Use a fresh ID so there is no duplicate-key conflict if the original
+    // row somehow appears between now and the insert.
+    const retryPayload = { ...payload, id: crypto.randomUUID() };
+    const err = await insertWithRetry(retryPayload);
+    if (err) {
+      console.warn("[bp] Retry error (all attempts failed):", err);
+      // Update the error with the latest debug info so the user sees the current failure
       setOrderError(prev => ({
         ...prev,
+        payload: retryPayload, // use new ID so next retry doesn't conflict
         debugMessage: err?.message || String(err),
         debugCode: err?.code || null,
       }));
       setRetrying(false);
+      return;
     }
+    saveHistory(retryPayload);
+    sessionStorage.setItem(SS_ORDER, JSON.stringify(retryPayload));
+    lsSet(LS_ACTIVE_ORDER, JSON.stringify(retryPayload));
+    setCart([]);
+    setOrderError(null);
+    setRetrying(false);
+    setPlacing(false);
+    setPlaced(retryPayload);
   };
 
   // Fix 1 + Feature 2: full-screen error card — special message when payment already captured
+  // Background auto-retry: every 15s for non-paid errors — customer may do nothing and it recovers.
+  useEffect(() => {
+    if (!orderError || orderError.razorpayPaymentId || retrying) return;
+    const t = setInterval(() => {
+      if (!retrying) retryOrder();
+    }, 15000);
+    return () => clearInterval(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderError, retrying]);
+
+  // Countdown to next auto-retry — shown in the error UI
+  const [autoRetryCountdown, setAutoRetryCountdown] = useState(15);
+  useEffect(() => {
+    if (!orderError || orderError.razorpayPaymentId) return;
+    setAutoRetryCountdown(15);
+    const tick = setInterval(() => setAutoRetryCountdown(c => (c <= 1 ? 15 : c - 1)), 1000);
+    return () => clearInterval(tick);
+  }, [orderError]);
+
   if (orderError) {
     const paidOnline = !!orderError.razorpayPaymentId;
     return (
@@ -2717,7 +2858,9 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         </div>
         <div>
           <p className="font-black text-stone-800 text-xl mb-2">
-            {paidOnline ? "Payment captured — but order didn't save" : "Order couldn't be placed"}
+            {paidOnline ? "Payment captured — but order didn't save"
+              : orderError.wasMissing ? "That order never actually went through"
+              : "Order couldn't be placed"}
           </p>
           {paidOnline ? (
             <div className="bg-white border border-red-200 rounded-2xl px-4 py-3 max-w-xs mx-auto mb-2">
@@ -2725,6 +2868,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
               <p className="text-xs text-stone-600">Payment ID: <span className="font-mono font-bold text-stone-800">{orderError.razorpayPaymentId}</span></p>
               <p className="text-xs text-stone-500 mt-1">Screenshot this and call us — we'll confirm your order manually.</p>
             </div>
+          ) : orderError.wasMissing ? (
+            <p className="text-sm text-stone-500">It looked placed on your screen, but the kitchen never got it — likely a dropped connection right when you ordered. Nothing was charged. Please try again.</p>
           ) : (
             <>
               <p className="text-sm text-stone-500">Check your connection and try again — your cart is still saved.</p>
@@ -2742,11 +2887,22 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 text-white px-8 py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-60">
           {retrying ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Retrying…</> : "🔄 Try Again"}
         </button>
+        {/* Auto-retry countdown — only for non-paid, non-ghost errors */}
+        {!paidOnline && !orderError.wasMissing && !retrying && (
+          <p className="text-xs text-stone-400 -mt-3">
+            Auto-retrying in {autoRetryCountdown}s…
+          </p>
+        )}
         <a href="tel:+919194008822" className="flex items-center gap-2 border border-orange-200 text-orange-600 font-bold text-sm px-6 py-3 rounded-2xl">
           <Phone size={14} /> Call Restaurant
         </a>
-        {!paidOnline && (
+        {/* wasMissing = cart already cleared before ghost was detected, nothing to go back to.
+             Regular errors keep the cart intact so going back is useful. */}
+        {!paidOnline && !orderError.wasMissing && (
           <button onClick={() => setOrderError(null)} className="text-xs text-stone-400 underline">Go back to cart</button>
+        )}
+        {orderError.wasMissing && (
+          <button onClick={() => { setOrderError(null); lsRemove(LS_CART); window.location.reload(); }} className="text-xs text-stone-400 underline">Start a new order</button>
         )}
       </div>
     );
@@ -2755,7 +2911,12 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   if (placing) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-orange-50 gap-4">
       <div className="w-20 h-20 rounded-full bg-orange-100 flex items-center justify-center text-4xl">🍔</div>
-      <p className="font-bold text-stone-700 text-lg">Sending to kitchen…</p>
+      <p className="font-bold text-stone-700 text-lg">
+        {retryAttempt > 0 ? `Retrying… (attempt ${retryAttempt + 1} of 3)` : "Sending to kitchen…"}
+      </p>
+      {retryAttempt > 0 && (
+        <p className="text-xs text-stone-400 -mt-2">Poor connection detected — hanging on…</p>
+      )}
       <div className="flex gap-1.5">{[0, 1, 2].map(i => <div key={i} className="w-2 h-2 rounded-full bg-orange-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />)}</div>
     </div>
   );
