@@ -652,7 +652,7 @@ function RiderFallbackControls({ order, onAdvance }) {
   );
 }
 
-function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPrintKOT, onPrintInvoice }) {
+function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPrintKOT, onPrintInvoice, isAddOn }) {
   const [open, setOpen] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
   const ns = getNextStep(order);
@@ -663,7 +663,7 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
   const isTerminal = order.status === "cancelled" || order.status === "served";
 
   return (
-    <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden mb-3 ${isUnconfirmed ? "border-red-300 border-2" : "border-stone-100"}`}>
+    <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden mb-3 ${isAddOn ? "border-amber-400 border-2" : isUnconfirmed ? "border-red-300 border-2" : "border-stone-100"}`}>
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 cursor-pointer" onClick={() => setOpen(o => !o)}>
         <div className="relative">
@@ -680,6 +680,11 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${cfg.color}`}>{cfg.label}</span>
             {isUnconfirmed && (
               <span className="text-[10px] font-black text-red-600 flex-shrink-0">● NOT CONFIRMED</span>
+            )}
+            {isAddOn && (
+              <span className="text-[10px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full flex-shrink-0 flex items-center gap-0.5">
+                ➕ Add-on
+              </span>
             )}
           </div>
           <div className="flex items-center gap-2 mt-0.5">
@@ -4467,15 +4472,29 @@ export default function AdminApp() {
               </div>
             ) : (
               <>
-                {filtered.map(order => (
-                  <OrderCard key={order.id} order={order}
-                    onAdvance={updateStatus}
-                    onCancel={handleCancel}
-                    riders={riders}
-                    onAssignDispatch={id => setAssignModal(id)}
-                    onPrintKOT={handlePrintKOT}
-                    onPrintInvoice={handlePrintInvoice} />
-                ))}
+                {(() => {
+                  // Detect tables with multiple active (non-terminal) orders — flag add-ons
+                  const TERMINAL = new Set(["cancelled", "served"]);
+                  const activeByTable = {};
+                  orders.forEach(o => {
+                    if (!o.table_label || TERMINAL.has(o.status)) return;
+                    if (!activeByTable[o.table_label]) activeByTable[o.table_label] = [];
+                    activeByTable[o.table_label].push(o.id);
+                  });
+                  const multiOrderTables = new Set(
+                    Object.entries(activeByTable).filter(([, ids]) => ids.length > 1).map(([lbl]) => lbl)
+                  );
+                  return filtered.map(order => (
+                    <OrderCard key={order.id} order={order}
+                      onAdvance={updateStatus}
+                      onCancel={handleCancel}
+                      riders={riders}
+                      onAssignDispatch={id => setAssignModal(id)}
+                      onPrintKOT={handlePrintKOT}
+                      onPrintInvoice={handlePrintInvoice}
+                      isAddOn={!!order.table_label && multiOrderTables.has(order.table_label)} />
+                  ));
+                })()}
               </>
             )}
           </>
