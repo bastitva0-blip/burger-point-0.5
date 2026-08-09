@@ -1293,6 +1293,15 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
   const curIdx = steps.findIndex(s => s.key === status);
   const ot     = order.order_type || "dine-in";
 
+  // "Add More Items" visibility rules:
+  // dine-in / takeaway → show as long as order isn't cancelled or done
+  // delivery           → show only until rider is assigned (dispatched / served / cancelled = hide)
+  const canAddMore = (() => {
+    if (status === "cancelled" || status === "served" || status === "done") return false;
+    if (ot === "delivery") return status === "pending" || status === "accepted";
+    return true; // dine-in, takeaway
+  })();
+
   const waitMins = (() => {
     if (status === "pending" || status === "accepted") {
       return waitTimes[ot] || (ot === "delivery" ? 40 : ot === "takeaway" ? 20 : 15);
@@ -1681,9 +1690,27 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           <Phone size={15} /> Call Restaurant
         </a>
 
+        {/* ── Add More Items (while order is still active) ── */}
+        {canAddMore && (
+          <div className="mt-5">
+            <button
+              onClick={onNewOrder}
+              className="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2"
+            >
+              <span className="text-lg">➕</span>
+              Add More Items
+            </button>
+            <p className="text-center text-[10px] text-stone-400 mt-2">
+              {ot === "dine-in"
+                ? "Craving something else? Add to your table — kitchen gets notified instantly."
+                : "Want to add to your order? Place it now before it's packed."}
+            </p>
+          </div>
+        )}
+        {/* After served — start a fresh order */}
         {status === "served" && (
-          <button onClick={onNewOrder} className="mt-5 w-full bg-gradient-to-r from-orange-500 to-red-500 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform">
-            🛒 Order More
+          <button onClick={onNewOrder} className="mt-3 w-full border-2 border-orange-400 text-orange-600 py-3.5 rounded-2xl font-bold text-sm active:scale-95 transition-transform">
+            🛒 New Order
           </button>
         )}
         <div className="mt-4 flex gap-3 justify-center">
