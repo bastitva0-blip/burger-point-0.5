@@ -1223,7 +1223,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
     // trigger a notification for a status the customer already saw.
     applyUpdateRef.current._lastStatus = order.status || null;
 
-    const ORDER_FIELDS = "status, rider_name, rider_phone, route_geometry, route_distance_km, route_eta_minutes, delivery_started_at, customer_lat, customer_lng, cancel_reason";
+    const ORDER_FIELDS = "status, rider_name, rider_phone, route_geometry, route_distance_km, route_eta_minutes, delivery_started_at, customer_lat, customer_lng, cancel_reason, items, total, pending_addon_items, pending_addon_total, addon_requested_at, addon_declined_at";
 
     // 1. Fetch current state immediately on mount; retry once on failure
     const fetchNow = (retryMs = 0) => {
@@ -1292,6 +1292,13 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
   const steps  = getTrackerSteps(order.order_type || "dine-in");
   const curIdx = steps.findIndex(s => s.key === status);
   const ot     = order.order_type || "dine-in";
+
+  // Items the customer asked to add via "Add More Items" that staff hasn't
+  // approved yet — lives on the SAME order row (pending_addon_items), so
+  // there's no separate order to reconcile. See finaliseOrder in the parent.
+  const pendingAddon = (liveOrder.pending_addon_items && liveOrder.pending_addon_items.length > 0)
+    ? liveOrder.pending_addon_items
+    : null;
 
   // "Add More Items" visibility rules:
   // dine-in / takeaway → show as long as order isn't cancelled or done
@@ -1446,8 +1453,8 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
 
   // Feature 6: WhatsApp order summary
   const waOrderSummary = (() => {
-    const lines = (order.items || []).map(it => `• ${it.name}${it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×${it.qty} — ₹${it.finalPrice * it.qty}`);
-    const msg = `🍔 *Burger Point Order*\n\n${lines.join("\n")}\n\n*Total: ₹${order.total}*`;
+    const lines = (liveOrder.items || order.items || []).map(it => `• ${it.name}${it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×${it.qty} — ₹${it.finalPrice * it.qty}`);
+    const msg = `🍔 *Burger Point Order*\n\n${lines.join("\n")}\n\n*Total: ₹${liveOrder.total ?? order.total}*`;
     const phone = order.customer_phone;
     return phone
       ? `https://wa.me/91${phone}?text=${encodeURIComponent(msg)}`
@@ -1631,6 +1638,43 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           </div>
         )}
 
+        {/* ── Add More Items (moved above the live status tracker) ── */}
+        {canAddMore && !pendingAddon && (
+          <div className="mb-5">
+            <button
+              onClick={onNewOrder}
+              className="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2"
+            >
+              <span className="text-lg">➕</span>
+              Add More Items
+            </button>
+            <p className="text-center text-[10px] text-stone-400 mt-2">
+              {ot === "dine-in"
+                ? "Craving something else? Add to your table — kitchen gets notified instantly."
+                : "Want to add to your order? Place it now before it's packed."}
+            </p>
+          </div>
+        )}
+
+        {/* ── Pending add-on request — waiting for staff to approve ── */}
+        {pendingAddon && (
+          <div className="mb-5 bg-amber-50 border-2 border-amber-300 rounded-2xl p-4">
+            <p className="text-xs font-black text-amber-700 flex items-center gap-1.5">
+              ⏳ Waiting for approval
+            </p>
+            <p className="text-[11px] text-amber-600 mt-1 mb-2">
+              You asked to add these to your {ot === "dine-in" ? "table's" : ""} order — staff will confirm in a moment:
+            </p>
+            {pendingAddon.map((it, i) => (
+              <div key={i} className="flex justify-between text-sm py-0.5">
+                <span className="text-stone-700">{it.name}{it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×{it.qty}</span>
+                <span className="text-stone-500 font-semibold">₹{it.finalPrice * it.qty}</span>
+              </div>
+            ))}
+            <p className="text-[10px] text-amber-500 mt-2">Once approved, it'll appear below with the rest of your order — and on one bill.</p>
+          </div>
+        )}
+
         {/* Steps */}
         {steps.map(({ key, label, sub, icon }, i) => {
           const done = i <= curIdx; const cur = i === curIdx;
@@ -1653,10 +1697,10 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           );
         })}
 
-        {/* Order summary */}
+        {/* Order summary — live: reflects any approved add-ons instantly */}
         <div className="bg-white rounded-2xl p-4 border border-orange-100 mt-2">
           <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-3">Your Order</p>
-          {order.items?.map((it, i) => (
+          {(liveOrder.items || order.items)?.map((it, i) => (
             <div key={i} className="flex justify-between text-sm py-1">
               <span className="text-stone-700">{it.name}{it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×{it.qty}
                 {it.addonLabels?.length > 0 && <span className="text-[11px] text-orange-400 ml-1">({it.addonLabels.join(", ")})</span>}
@@ -1665,7 +1709,7 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
             </div>
           ))}
           <div className="border-t border-stone-100 pt-2 mt-2 flex justify-between font-bold text-sm">
-            <span>Total</span><span className="text-orange-600">₹{order.total}</span>
+            <span>Total</span><span className="text-orange-600">₹{liveOrder.total ?? order.total}</span>
           </div>
           {order.note && <p className="text-xs text-stone-400 italic mt-2">Note: "{order.note}"</p>}
         </div>
@@ -1690,23 +1734,6 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
           <Phone size={15} /> Call Restaurant
         </a>
 
-        {/* ── Add More Items (while order is still active) ── */}
-        {canAddMore && (
-          <div className="mt-5">
-            <button
-              onClick={onNewOrder}
-              className="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2"
-            >
-              <span className="text-lg">➕</span>
-              Add More Items
-            </button>
-            <p className="text-center text-[10px] text-stone-400 mt-2">
-              {ot === "dine-in"
-                ? "Craving something else? Add to your table — kitchen gets notified instantly."
-                : "Want to add to your order? Place it now before it's packed."}
-            </p>
-          </div>
-        )}
         {/* After served — start a fresh order */}
         {status === "served" && (
           <button onClick={onNewOrder} className="mt-3 w-full border-2 border-orange-400 text-orange-600 py-3.5 rounded-2xl font-bold text-sm active:scale-95 transition-transform">
@@ -2586,12 +2613,13 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       created_at: new Date().toISOString(),
     };
 
-    // ── Merge onto an existing open order instead of creating a new one ──
+    // ── Add-on request onto an existing open order, instead of a new one ──
     // If this table (dine-in) or this customer (takeaway) already has an
-    // order that isn't finished yet, fold the new items into that same row
-    // — one ticket, one bill — rather than spawning a second order. Delivery
-    // is excluded: each delivery run is its own dispatch, never merged.
-    let mergedInto = null;
+    // order that isn't finished yet, DON'T merge the items in silently.
+    // Stage them in pending_addon_items on that same row and wait for staff
+    // to approve — only then do they join the main items/bill. Delivery is
+    // excluded: each delivery run is its own dispatch, never merged.
+    let addonTarget = null;
     if (SUPABASE_READY && orderType !== "delivery") {
       try {
         let q = supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(1);
@@ -2605,41 +2633,39 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         if (q) {
           const { data: candidates } = await q;
           const existing = (candidates || [])[0];
-          // Only merge into orders still genuinely open, and (for takeaway)
+          // Only attach to orders still genuinely open, and (for takeaway)
           // only if it's recent — don't glue today's order onto a stale one.
           const recentEnough = !existing || orderType !== "takeaway"
             || (Date.now() - new Date(existing.created_at).getTime()) < 3 * 60 * 60 * 1000;
+          // Don't stack a second add-on request on top of an unapproved one —
+          // fold the new items into the same pending batch instead.
           if (existing && recentEnough && isOrderActive(existing)) {
-            const mergedItems = [...(existing.items || []), ...newItems];
-            const mergedTotal = Number(existing.total || 0) + Number(total || 0);
-            const mergedNote = [existing.note, note].filter(Boolean).join(" | ");
-            // If the previous ticket was already served, new items mean the
-            // kitchen has work again — bump it back to "pending" so it pops
-            // back into the Orders tab. If it's still cooking, leave status as-is.
-            const nextStatus = existing.status === "served" ? "pending" : existing.status;
+            const combinedPendingItems = [...(existing.pending_addon_items || []), ...newItems];
+            const combinedPendingTotal = Number(existing.pending_addon_total || 0) + Number(total || 0);
             const updatePayload = {
-              items: mergedItems, total: mergedTotal, note: mergedNote,
-              status: nextStatus,
+              pending_addon_items: combinedPendingItems,
+              pending_addon_total: combinedPendingTotal,
+              addon_requested_at: new Date().toISOString(),
             };
             const { data: updated, error } = await supabase.from("orders")
               .update(updatePayload).eq("id", existing.id).select().single();
             if (error) throw error;
-            mergedInto = updated || { ...existing, ...updatePayload };
+            addonTarget = updated || { ...existing, ...updatePayload };
           }
         }
       } catch (err) {
-        console.warn("[bp] merge check failed, placing as a new order instead:", err?.message);
-        mergedInto = null; // fall through to normal insert below
+        console.warn("[bp] add-on request failed, placing as a new order instead:", err?.message);
+        addonTarget = null; // fall through to normal insert below
       }
     }
 
-    if (mergedInto) {
-      sessionStorage.setItem(SS_ORDER, JSON.stringify(mergedInto));
-      lsSet(LS_ACTIVE_ORDER, JSON.stringify(mergedInto));
-      saveHistory(mergedInto);
+    if (addonTarget) {
+      sessionStorage.setItem(SS_ORDER, JSON.stringify(addonTarget));
+      lsSet(LS_ACTIVE_ORDER, JSON.stringify(addonTarget));
+      saveHistory(addonTarget);
       setTimeout(() => {
         setCart([]); setPlacing(false);
-        setPlaced(mergedInto);
+        setPlaced(addonTarget);
       }, 800);
       return;
     }
