@@ -36,6 +36,16 @@ export const getRoute = () => {
   }
   if (hash === "#takeaway") return { page:"takeaway" };
   if (hash === "#delivery") return { page:"delivery" };
+  // ── Support URL: burgerpoint.co.in/#reset-order ──────────
+  // Clears any stuck LS_ACTIVE_ORDER on the device without touching the DB.
+  // Must be handled here (before session restore below) so the clear happens
+  // before CustomerApp ever reads the stale value from localStorage.
+  if (hash === "#reset-order") {
+    try { localStorage.removeItem("bp_active_order"); } catch {}
+    try { sessionStorage.removeItem("bp_placed_order"); } catch {}
+    history.replaceState(null,"",window.location.pathname+window.location.search);
+    return { page:"reset-order" };
+  }
   const raw = sessionStorage.getItem(BP_SESSION_KEY);
   if (raw) {
     try {
