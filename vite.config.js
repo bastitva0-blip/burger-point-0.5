@@ -5,46 +5,49 @@ export default defineConfig({
   plugins: [react()],
 
   build: {
-    // Raise chunk warning limit slightly (leaflet is unavoidably large)
     chunkSizeWarningLimit: 600,
 
     rollupOptions: {
       output: {
-        manualChunks: {
-          // React core — tiny, cached forever
-          'vendor-react': ['react', 'react-dom'],
-
-          // Supabase — only needed after first interaction
-          'vendor-supabase': ['@supabase/supabase-js'],
-
-          // Framer Motion — heavy, split out so main bundle stays lean
-          'vendor-framer': ['framer-motion'],
-
-          // Leaflet + react-leaflet — only used on map screen
-          'vendor-leaflet': ['leaflet', 'react-leaflet'],
-
-          // Lucide icons — tree-shaken by Vite but isolate anyway
-          'vendor-icons': ['lucide-react'],
-
-          // QR code — only used in admin
-          'vendor-qrcode': ['qrcode'],
+        manualChunks(id) {
+          // React core — tiny, cached forever after first visit
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
+            return 'vendor-react';
+          }
+          // Supabase — only needed after first interaction, not on initial paint
+          if (id.includes('node_modules/@supabase/')) {
+            return 'vendor-supabase';
+          }
+          // Leaflet + react-leaflet — only used on delivery map screen
+          if (id.includes('node_modules/leaflet') || id.includes('node_modules/react-leaflet')) {
+            return 'vendor-leaflet';
+          }
+          // Lucide icons — large but tree-shaken; isolate so it caches independently
+          if (id.includes('node_modules/lucide-react')) {
+            return 'vendor-icons';
+          }
+          // QR code — admin only, never needed on customer path
+          if (id.includes('node_modules/qrcode')) {
+            return 'vendor-qrcode';
+          }
+          // Razorpay loads via script tag at runtime — no bundle entry needed
         },
       },
     },
 
-    // Minify with esbuild (default, fast + good)
+    // esbuild minifier: fast + produces smaller output than terser for this stack
     minify: 'esbuild',
 
-    // Generate source maps only in dev
+    // Source maps only in dev — don't ship them to production
     sourcemap: false,
 
-    // Target modern browsers (smaller output, no IE polyfills)
+    // Target modern browsers: drops IE/legacy polyfills (~30 KiB saved)
     target: 'es2020',
   },
 
-  // Pre-bundle these for faster dev too
   optimizeDeps: {
     include: ['react', 'react-dom', '@supabase/supabase-js'],
+    // Exclude map libs from pre-bundling — they're only loaded on the delivery screen
     exclude: ['leaflet', 'react-leaflet'],
   },
 })
