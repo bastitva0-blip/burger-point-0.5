@@ -3395,6 +3395,163 @@ function NotificationsSection() {
 // ─────────────────────────────────────────────────────────
 //  SETTINGS TAB
 // ─────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────
+//  PROMO BANNER + TODAY'S SPECIAL SECTION
+// ─────────────────────────────────────────────────────────
+function PromoBannerSection() {
+  const toast = useToast();
+  const { settings, loading, save } = useBusinessSettings();
+
+  // Local form state — mirrors the DB fields we own
+  const [form, setForm] = useState({
+    special_label:        "Today's Special",
+    special_item_id:      null,
+    promo_banner_url:     null,
+    promo_banner_enabled: false,
+  });
+  const [saving,       setSaving]       = useState(false);
+  const [saved,        setSaved]        = useState(false);
+  const [uploadingImg, setUploadingImg] = useState(false);
+  const [menuItems,    setMenuItems]    = useState([]); // for dropdown
+
+  // Seed form from DB on first load
+  useEffect(() => {
+    if (!loading) {
+      setForm({
+        special_label:        settings.special_label        ?? "Today's Special",
+        special_item_id:      settings.special_item_id      ?? null,
+        promo_banner_url:     settings.promo_banner_url     ?? null,
+        promo_banner_enabled: settings.promo_banner_enabled ?? false,
+      });
+    }
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load all menu items for the "pin a specific item" dropdown
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    supabase.from("menu_items").select("id, name, category").order("name")
+      .then(({ data }) => { if (data) setMenuItems(data); });
+  }, []);
+
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value || null }));
+  const toggle = (k) => setForm(f => ({ ...f, [k]: !f[k] }));
+
+  // Image upload → supabase storage (reuses the same "menu-images" bucket under a "banners/" prefix)
+  const handleBannerUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImg(true);
+    let uploadFile = file;
+    try { uploadFile = await compressImage(file); } catch { /* fall back to original */ }
+    const fileName = `banners/promo_banner_${Date.now()}.jpg`;
+    const { data, error } = await supabase.storage
+      .from("menu-images")
+      .upload(fileName, uploadFile, { contentType: "image/jpeg", upsert: true, cacheControl: "31536000" });
+    setUploadingImg(false);
+    if (error) { toast.error("Upload failed: " + error.message); return; }
+    const { data: { publicUrl } } = supabase.storage.from("menu-images").getPublicUrl(data.path);
+    setForm(f => ({ ...f, promo_banner_url: publicUrl }));
+    toast.success("Banner uploaded!");
+  };
+
+  const doSave = async () => {
+    setSaving(true);
+    const { error } = await save({
+      special_label:        form.special_label || "Today's Special",
+      special_item_id:      form.special_item_id || null,
+      promo_banner_url:     form.promo_banner_url || null,
+      promo_banner_enabled: !!form.promo_banner_enabled,
+    });
+    setSaving(false);
+    if (error) { toast.error("Save failed: " + error.message); return; }
+    setSaved(true);
+    toast.success("Saved!");
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const inputCls = "w-full text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-2.5 outline-none text-stone-700";
+
+  if (loading) return <Section emoji="🎯" title="Today's Special &amp; Promo Banner"><p className="text-xs text-stone-400">Loading…</p></Section>;
+
+  return (
+    <Section emoji="🎯" title="Today's Special & Promo Banner">
+
+      {/* ── TODAY'S SPECIAL ── */}
+      <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Today's Special Card</p>
+      <div className="space-y-3">
+        {/* Label / rename */}
+        <div>
+          <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Section Label</label>
+          <input
+            value={form.special_label ?? ""}
+            onChange={e => setForm(f => ({ ...f, special_label: e.target.value }))}
+            placeholder="Today's Special"
+            className={inputCls}
+          />
+          <p className="text-[10px] text-stone-400 mt-1">Shown above the featured item card — e.g. "Independence Day's Special", "Chef's Pick"</p>
+        </div>
+
+        {/* Pin a specific item */}
+        <div>
+          <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block mb-1">Featured Item</label>
+          <select
+            value={form.special_item_id ?? ""}
+            onChange={e => setForm(f => ({ ...f, special_item_id: e.target.value || null }))}
+            className={inputCls}
+          >
+            <option value="">— Auto (rotate bestsellers daily) —</option>
+            {menuItems.map(i => (
+              <option key={i.id} value={i.id}>{i.name} · {i.category}</option>
+            ))}
+          </select>
+          <p className="text-[10px] text-stone-400 mt-1">Pin a specific item or leave auto to rotate daily from bestsellers</p>
+        </div>
+      </div>
+
+      {/* ── PROMO BANNER ── */}
+      <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mt-5 mb-2">Promo Banner</p>
+      <div className="space-y-3">
+        {/* Enable toggle */}
+        <button onClick={() => toggle("promo_banner_enabled")}
+          className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 text-sm font-bold transition-all
+            ${form.promo_banner_enabled ? "bg-orange-50 border-orange-300 text-orange-700" : "bg-stone-50 border-stone-200 text-stone-500"}`}>
+          {form.promo_banner_enabled ? "🟠 Banner ON — showing to customers" : "⚪ Banner OFF — hidden"}
+          <div className={`w-10 h-6 rounded-full relative transition-all ${form.promo_banner_enabled ? "bg-orange-500" : "bg-stone-300"}`}>
+            <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${form.promo_banner_enabled ? "right-0.5" : "left-0.5"}`} />
+          </div>
+        </button>
+
+        {/* Current banner preview */}
+        {form.promo_banner_url && (
+          <div className="rounded-xl overflow-hidden border-2 border-stone-100 relative">
+            <img src={form.promo_banner_url} alt="Promo banner" className="w-full object-cover max-h-40" />
+            <button onClick={() => setForm(f => ({ ...f, promo_banner_url: null }))}
+              className="absolute top-2 right-2 w-7 h-7 bg-black/60 text-white rounded-full text-xs font-bold flex items-center justify-center">
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Upload */}
+        <label className={`flex items-center gap-3 border-2 border-dashed rounded-xl px-4 py-3 cursor-pointer transition-colors
+          ${uploadingImg ? "border-orange-300 bg-orange-50" : "border-stone-200 hover:border-orange-400 bg-white"}`}>
+          <input type="file" accept="image/*" className="hidden" onChange={handleBannerUpload} disabled={uploadingImg} />
+          <span className="text-xl">{uploadingImg ? "⏳" : "🖼️"}</span>
+          <div>
+            <p className="text-sm font-bold text-stone-700">{uploadingImg ? "Uploading…" : form.promo_banner_url ? "Replace banner image" : "Upload banner image (JPG)"}</p>
+            <p className="text-[10px] text-stone-400">Shown as full-screen popup on app open + smaller block in cart</p>
+          </div>
+        </label>
+      </div>
+
+      <button onClick={doSave} disabled={saving || uploadingImg}
+        className="w-full mt-4 bg-stone-800 text-white py-2.5 rounded-xl text-xs font-bold disabled:opacity-60 flex items-center justify-center gap-1.5">
+        <Save size={13} /> {saving ? "Saving…" : saved ? "✓ Saved!" : "Save Special & Banner Settings"}
+      </button>
+    </Section>
+  );
+}
+
 function SettingsTab({ riders, setRiders, onLogout, busy, setBusy, busySaving, setBusySaving }) {
   const toast = useToast();
   // Busy mode (state lifted to AdminApp root for top-bar toggle access)
@@ -3485,6 +3642,7 @@ function SettingsTab({ riders, setRiders, onLogout, busy, setBusy, busySaving, s
   return (
     <div className="space-y-0">
       <BusinessSettingsSection />
+      <PromoBannerSection />
       <CategoriesSection />
       <NotificationsSection />
       {/* ── BUSY MODE ── */}
