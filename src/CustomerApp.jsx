@@ -2456,6 +2456,34 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-refresh placed order status in parent so OrderTracker prop stays live.
+  // Runs every 3s while an active order exists — no manual refresh needed.
+  useEffect(() => {
+    if (!placed || !SUPABASE_READY) return;
+    if (!ACTIVE_STATUSES.has(placed.status)) return; // terminal — stop polling
+    const t = setInterval(async () => {
+      const { data } = await supabase
+        .from("orders")
+        .select("status, rider_name, rider_phone")
+        .eq("id", placed.id)
+        .maybeSingle();
+      if (!data) return;
+      if (data.status !== placed.status || data.rider_name !== placed.rider_name) {
+        const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
+        setPlaced(updated);
+        if (ACTIVE_STATUSES.has(data.status)) {
+          sessionStorage.setItem(SS_ORDER, JSON.stringify(updated));
+          lsSet(LS_ACTIVE_ORDER, JSON.stringify(updated));
+        } else {
+          lsRemove(LS_ACTIVE_ORDER);
+          sessionStorage.removeItem(SS_ORDER);
+        }
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placed?.id, placed?.status]);
+
   // Fix 4: track whether menu is from DB or fallback cache
   const [menuIsStale, setMenuIsStale] = useState(false);
   // supabaseDown = env vars set but server unreachable (outage etc.)
