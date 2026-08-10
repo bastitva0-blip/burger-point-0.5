@@ -1217,24 +1217,18 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
 
     const applyUpdate = (data) => {
       if (!data) return;
-
-      // Always merge the full row first — this ensures cancel_reason, items,
-      // and any other fields arrive in liveOrder before the status re-render.
-      setLiveOrder(prev => ({ ...prev, ...data }));
-      if (data.rider_name)  setRiderName(data.rider_name);
-      if (data.rider_phone) setRiderPhone(data.rider_phone);
-
       if (data.status) {
-        const prevStatus = applyUpdateRef.current?._lastStatus;
-
         // Feature 7: push notification on status change
+        // _lastStatus is seeded below with order.status so resuming a page never
+        // fires a notification for the status that was already known on mount.
+        const prevStatus = applyUpdateRef.current?._lastStatus;
         if (data.status !== prevStatus && "Notification" in window && Notification.permission === "granted") {
           const NOTIF_MSGS = {
-            accepted:   "👨‍🍳 Your order is being prepared!",
-            ready:      "✅ Your order is ready!",
-            dispatched: "🛵 Your rider is on the way!",
-            served:     "😊 Order delivered — enjoy!",
-            cancelled:  "😔 Your order was cancelled",
+            accepted:  "👨‍🍳 Your order is being prepared!",
+            ready:     "✅ Your order is ready!",
+            dispatched:"🛵 Your rider is on the way!",
+            served:    "😊 Order delivered — enjoy!",
+            cancelled: "😔 Your order was cancelled",
           };
           const msg = NOTIF_MSGS[data.status];
           if (msg) {
@@ -1242,19 +1236,19 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
             setTimeout(() => n.close(), 6000);
           }
         }
-
-        // Update status — triggers immediate re-render to cancelled/served screen
         setStatus(data.status);
-
-        // Wipe persisted copies on terminal state so a refresh doesn't show stale screen
+        // As soon as the order reaches a terminal state, wipe the persisted copies
+        // so that a page-refresh no longer shows a stale "dispatched" or "pending" screen.
         if (TERMINAL.has(data.status)) {
           lsRemove(LS_ACTIVE_ORDER);
           sessionStorage.removeItem(SS_ORDER);
         }
-
-        // keep ref in sync
-        applyUpdateRef.current._lastStatus = data.status;
       }
+      if (data.rider_name)  setRiderName(data.rider_name);
+      if (data.rider_phone) setRiderPhone(data.rider_phone);
+      setLiveOrder(prev => ({ ...prev, ...data }));
+      // keep ref in sync for offline handler
+      if (applyUpdateRef.current) applyUpdateRef.current._lastStatus = data.status || applyUpdateRef.current._lastStatus;
     };
     applyUpdateRef.current = applyUpdate;
     // Seed with the known status so the first fetch/realtime event doesn't
@@ -1263,19 +1257,19 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
 
     const ORDER_FIELDS = "status, rider_name, rider_phone, route_geometry, route_distance_km, route_eta_minutes, delivery_started_at, customer_lat, customer_lng, cancel_reason, items, total, pending_addon_items, pending_addon_total, addon_requested_at, addon_declined_at";
 
-    // 1. Fetch current state immediately on mount; retry quickly on failure
-    const fetchNow = () => {
+    // 1. Fetch current state immediately on mount; retry once on failure
+    const fetchNow = (retryMs = 0) => {
       supabase.from("orders").select(ORDER_FIELDS).eq("id", order.id).single()
         .then(({ data, error }) => {
-          if (!error && data) applyUpdate(data);
+          if (!error) applyUpdate(data);
+          else if (retryMs > 0) setTimeout(() => fetchNow(0), retryMs);
         });
     };
-    fetchNow(); // fire immediately on mount — no delay
+    fetchNow(3000); // initial fetch; retry after 3 s if it fails
 
     // 2. Subscribe to real-time changes — fires the instant admin updates the row.
     //    NOTE: Realtime only works if the orders table has replication enabled in Supabase
     //    (Database → Replication → supabase_realtime publication → toggle orders ON).
-    //    The subscribe() callback detects channel errors and fetches immediately as fallback.
     const channel = supabase
       .channel(`order-${order.id}`)
       .on(
@@ -1283,28 +1277,22 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
         { event: "UPDATE", schema: "public", table: "orders", filter: `id=eq.${order.id}` },
         (payload) => applyUpdate(payload.new)
       )
-      .subscribe((channelStatus) => {
-        // If Realtime isn't working (replication not enabled, network issue, etc.)
-        // do an immediate fetch so we don't wait for the first poll tick.
-        if (channelStatus === "CHANNEL_ERROR" || channelStatus === "TIMED_OUT") {
-          fetchNow();
-        }
-      });
+      .subscribe();
 
-    // 3. Always-on polling — 2s when visible (fast enough to feel instant),
+    // 3. Always-on polling — 5s when the tab is visible (customer is watching),
     //    15s when hidden (background tab / phone screen off) to save battery.
-    //    This is the safety net for when Realtime replication isn't enabled.
-    let pollTimer = setInterval(() => fetchNow(), document.visibilityState === "visible" ? 2000 : 15000);
+    //    Guarantees updates even when Realtime replication is disabled on the table.
+    let pollTimer = setInterval(() => fetchNow(0), document.visibilityState === "visible" ? 5000 : 15000);
 
     // 4. Re-fetch immediately when the customer switches back to this tab/app,
     //    and re-tune the polling interval for the new visibility state.
     const onVisible = () => {
       clearInterval(pollTimer);
       if (document.visibilityState === "visible") {
-        fetchNow(); // instant catch-up on tab focus
-        pollTimer = setInterval(() => fetchNow(), 2000);
+        fetchNow(0);
+        pollTimer = setInterval(() => fetchNow(0), 5000);
       } else {
-        pollTimer = setInterval(() => fetchNow(), 15000);
+        pollTimer = setInterval(() => fetchNow(0), 15000);
       }
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -3407,188 +3395,135 @@ export function LandingPage({ installPrompt }) {
   const handleInstall = () => { if (isIos) { setIosHint(true); return; } installPrompt?.prompt(); };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0f0800] overflow-hidden relative">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 p-4">
 
-      {/* ── Ambient background glows ── */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-orange-600/20 blur-3xl" />
-        <div className="absolute top-20 -right-20 w-72 h-72 rounded-full bg-red-700/15 blur-3xl" />
-        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-full h-64 bg-gradient-to-t from-orange-950/40 to-transparent" />
-      </div>
-
-      {/* ── Busy / Closed banner ── */}
+      {/* Busy/Closed banner */}
       {busy && (
-        <div className="relative z-10 mx-4 mt-4 bg-red-950/80 border border-red-500/40 rounded-2xl p-4 text-center backdrop-blur-sm">
-          <p className="font-bold text-red-300 text-sm">🔴 We're Currently Closed</p>
-          <p className="text-xs text-red-400 mt-1">{busy.message || "Please check back later."}</p>
-          {busy.opens_at && <p className="text-xs text-red-400 font-bold mt-1">Opens at {busy.opens_at}</p>}
+        <div className="w-full max-w-sm mb-4 bg-red-50 border-2 border-red-200 rounded-2xl p-4 text-center">
+          <p className="text-lg mb-1">🔴</p>
+          <p className="font-bold text-red-700 text-sm">We're Currently Closed</p>
+          <p className="text-xs text-red-600 mt-1">{busy.message || "Please check back later."}</p>
+          {busy.opens_at && <p className="text-xs text-red-500 font-bold mt-1">Opens at {busy.opens_at}</p>}
         </div>
       )}
 
-      {/* ── Hero ── */}
-      <div className="relative z-10 flex flex-col items-center pt-16 pb-2 px-6">
-
-        {/* Logo */}
-        <div className="relative mb-6">
-          <div className="absolute inset-0 rounded-[2rem] bg-orange-500/30 blur-xl scale-110" />
-          <div className="relative w-28 h-28 rounded-[2rem] bg-gradient-to-br from-orange-400 to-red-600 shadow-2xl overflow-hidden ring-4 ring-orange-500/30">
-            {bizSettings.logo_url
-              ? <img src={bizSettings.logo_url} alt={bizSettings.restaurant_name} className="w-full h-full object-cover" onError={(e) => { e.target.style.display="none"; e.target.parentElement.textContent="🍔"; }} />
-              : <span className="w-full h-full flex items-center justify-center text-5xl">🍔</span>}
-          </div>
+      <div className="text-center mb-7">
+        <div className="w-24 h-24 bg-gradient-to-br from-orange-500 to-red-600 rounded-3xl shadow-2xl flex items-center justify-center mx-auto mb-4 text-5xl overflow-hidden">
+          {bizSettings.logo_url
+            ? <img src={bizSettings.logo_url} alt={bizSettings.restaurant_name} className="w-full h-full object-cover" onError={(e) => { e.target.style.display = "none"; e.target.parentElement.textContent = "🍔"; }} />
+            : "🍔"}
         </div>
-
-        {/* Name + address */}
-        <h1 className="text-4xl font-black text-white tracking-tight text-center leading-none">
-          {bizSettings.restaurant_name || "Burger Point"}
-        </h1>
-        <p className="text-orange-300/70 text-sm mt-2 text-center">{bizSettings.address || "Jankipuram, Lucknow"}</p>
-
-        {/* Veg badge */}
-        <div className="flex items-center gap-1.5 mt-3 bg-green-950/60 border border-green-700/40 rounded-full px-3 py-1">
-          <span className="w-3 h-3 border-2 border-green-500 rounded-sm bg-transparent flex items-center justify-center flex-shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+        <h1 className="text-4xl font-black text-stone-800 tracking-tight">{bizSettings.restaurant_name || "Burger Point"}</h1>
+        <p className="text-stone-500 mt-1 text-sm">{bizSettings.address || "Jankipuram, Lucknow"}</p>
+        <div className="flex items-center justify-center gap-1 mt-1.5">
+          <span className="w-3.5 h-3.5 border-2 border-green-600 rounded-sm bg-white flex items-center justify-center flex-shrink-0">
+            <span className="w-2 h-2 rounded-full bg-green-600" />
           </span>
-          <span className="text-[11px] text-green-400 font-bold tracking-wide">100% Pure Vegetarian</span>
+          <span className="text-[11px] text-green-700 font-bold">100% Pure Vegetarian</span>
         </div>
       </div>
 
-      {/* ── Order type selector ── */}
-      <div className="relative z-10 flex-1 flex flex-col justify-center px-5 pt-6 pb-2">
-        {!mode && !busy && (
-          <div className="space-y-3 w-full max-w-sm mx-auto">
-            <p className="text-xs text-orange-300/50 font-bold uppercase tracking-widest text-center mb-4">How would you like to order?</p>
-
-            {/* 3 order type cards */}
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { id: "dine",     icon: "🍽️",  label: "Dine-In",   sub: "Table order",    gradient: "from-orange-600/80 to-amber-700/80" },
-                { id: "takeaway", icon: "📦",  label: "Takeaway",  sub: "Pick up",         gradient: "from-red-600/80 to-orange-700/80" },
-                { id: "delivery", icon: "🛵",  label: "Delivery",  sub: "To your door",    gradient: "from-rose-600/80 to-red-700/80" },
-              ].map(m => (
-                <button key={m.id} onClick={() => handleOrderTypePick(m.id)}
-                  className="group relative overflow-hidden rounded-2xl p-0.5 active:scale-95 transition-transform duration-150">
-                  {/* Card border gradient */}
-                  <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${m.gradient} opacity-60 group-active:opacity-100 transition-opacity`} />
-                  {/* Card body */}
-                  <div className="relative bg-white/[0.06] backdrop-blur-sm rounded-[14px] py-5 px-2 flex flex-col items-center gap-2">
-                    <span className="text-3xl">{m.icon}</span>
-                    <span className="text-xs font-black text-white leading-none">{m.label}</span>
-                    <span className="text-[9px] text-white/50 text-center leading-tight">{m.sub}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {/* Book a table */}
-            <button onClick={() => window.location.hash = "reservation"}
-              className="w-full flex items-center justify-center gap-2 bg-white/[0.06] border border-white/10 text-white/70 text-sm font-bold py-3.5 rounded-2xl hover:bg-white/10 hover:text-white transition-all backdrop-blur-sm">
-              <CalendarDays size={15} className="text-orange-400" /> Book a Table
-            </button>
-
-            {/* Add to home screen */}
-            {!isStandalone && (installPrompt || isIos) && (
-              <button onClick={handleInstall}
-                className="w-full flex items-center justify-center gap-2 bg-orange-500/10 border border-orange-500/30 text-orange-300 text-sm font-bold py-3.5 rounded-2xl hover:bg-orange-500/20 transition-all">
-                <Download size={15} /> Add to Home Screen
+      {/* Order type blocks — direct 3-tile layout, no modal */}
+      {!mode && !busy && (
+        <div className="w-full max-w-sm space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { id: "dine",     icon: "🍽️", label: "Dine-In",   sub: "Table order" },
+              { id: "takeaway", icon: "📦", label: "Takeaway",  sub: "Pick up" },
+              { id: "delivery", icon: "🛵", label: "Delivery",  sub: "To your door" },
+            ].map(m => (
+              <button key={m.id} onClick={() => handleOrderTypePick(m.id)}
+                className="bg-white border-2 border-orange-100 hover:border-orange-400 active:border-orange-500 rounded-3xl py-5 px-2 flex flex-col items-center gap-1.5 shadow-sm hover:shadow-md transition-all active:scale-95">
+                <span className="text-4xl">{m.icon}</span>
+                <span className="text-xs font-black text-stone-800">{m.label}</span>
+                <span className="text-[10px] text-stone-400 text-center leading-tight">{m.sub}</span>
               </button>
-            )}
-            {iosHint && (
-              <div className="bg-orange-950/60 border border-orange-500/30 rounded-2xl p-3 text-xs text-orange-300 text-center backdrop-blur-sm">
-                Tap <strong>Share ↗</strong> → <strong>"Add to Home Screen"</strong> in Safari
-              </div>
-            )}
+            ))}
           </div>
-        )}
+          <button onClick={() => window.location.hash = "reservation"}
+            className="w-full flex items-center justify-center gap-2 bg-white border-2 border-stone-100 text-stone-600 text-sm font-bold py-3 rounded-2xl hover:border-orange-300 hover:text-orange-600 transition-all">
+            <CalendarDays size={15} /> Book a Table
+          </button>
+        </div>
+      )}
 
-        {/* ── Dine-in code entry ── */}
-        {mode === "dine" && (
-          <div className="w-full max-w-sm mx-auto">
-            <div className={`bg-white/[0.06] backdrop-blur-xl rounded-3xl border border-white/10 p-6 ${shake ? "animate-pulse" : ""}`}>
-              <button onClick={() => { setMode(null); setCode(""); setErr(""); }}
-                className="flex items-center gap-1 text-orange-400 text-xs mb-5">
-                <ArrowLeft size={13} /> Back
+      {mode === "dine" && (
+        <div className={`bg-white rounded-3xl shadow-xl border border-orange-100 p-6 w-full max-w-sm ${shake ? "animate-pulse" : ""}`}>
+          <button onClick={() => { setMode(null); setCode(""); setErr(""); }} className="text-xs text-stone-400 flex items-center gap-1 mb-4">
+            <ArrowLeft size={12} /> Back
+          </button>
+          <h2 className="font-bold text-stone-700 text-base mb-1 text-center">Enter Table Code</h2>
+          <p className="text-xs text-stone-400 text-center mb-5">10-digit code on your table card</p>
+          <div className="relative mb-3">
+            <input ref={inputRef} value={code}
+              onChange={e => { setCode(e.target.value.replace(/\D/g, "").slice(0, 10)); setErr(""); }}
+              onKeyDown={e => e.key === "Enter" && go(code)}
+              placeholder="_ _ _ _ _ _ _ _ _ _" inputMode="numeric"
+              className="w-full text-center text-2xl font-black tracking-widest border-2 border-orange-200 focus:border-orange-500 rounded-2xl px-4 py-4 outline-none text-stone-800 transition-colors placeholder:text-stone-200" />
+            {code && <button onClick={() => { setCode(""); setErr(""); inputRef.current?.focus(); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-300"><X size={16} /></button>}
+          </div>
+          {err && <p className="text-red-500 text-xs text-center mb-3 font-medium">{err}</p>}
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, "←", 0, "Go"].map((k, i) => (
+              <button key={i} onClick={() => {
+                if (k === "←") { setCode(c => c.slice(0, -1)); setErr(""); }
+                else if (k === "Go") go(code);
+                else if (code.length < 10) { setCode(c => c + k); setErr(""); }
+              }} className={`py-3.5 rounded-2xl font-bold text-base transition-all active:scale-95 ${k === "Go" ? "bg-gradient-to-br from-orange-500 to-red-500 text-white shadow-md" : k === "←" ? "bg-stone-100 text-stone-500" : "bg-orange-50 text-stone-700 hover:bg-orange-100"}`}>
+                {k}
               </button>
-              <h2 className="font-black text-white text-lg text-center mb-1">Enter Table Code</h2>
-              <p className="text-xs text-white/40 text-center mb-5">10-digit code on your table card</p>
-              <div className="relative mb-3">
-                <input ref={inputRef} value={code}
-                  onChange={e => { setCode(e.target.value.replace(/\D/g, "").slice(0, 10)); setErr(""); }}
-                  onKeyDown={e => e.key === "Enter" && go(code)}
-                  placeholder="_ _ _ _ _ _ _ _ _ _" inputMode="numeric"
-                  className="w-full text-center text-2xl font-black tracking-widest bg-white/10 border-2 border-white/20 focus:border-orange-500 rounded-2xl px-4 py-4 outline-none text-white transition-colors placeholder:text-white/20 caret-orange-400" />
-                {code && <button onClick={() => { setCode(""); setErr(""); inputRef.current?.focus(); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30"><X size={16} /></button>}
-              </div>
-              {err && <p className="text-red-400 text-xs text-center mb-3 font-medium">{err}</p>}
-              <div className="grid grid-cols-3 gap-2 mb-4">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, "←", 0, "Go"].map((k, i) => (
-                  <button key={i} onClick={() => {
-                    if (k === "←") { setCode(c => c.slice(0, -1)); setErr(""); }
-                    else if (k === "Go") go(code);
-                    else if (code.length < 10) { setCode(c => c + k); setErr(""); }
-                  }} className={`py-3.5 rounded-2xl font-bold text-base transition-all active:scale-95
-                    ${k === "Go"  ? "bg-gradient-to-br from-orange-500 to-red-600 text-white shadow-lg shadow-orange-900/50"
-                    : k === "←"  ? "bg-white/10 text-white/60"
-                    :               "bg-white/[0.07] text-white hover:bg-white/15"}`}>
-                    {k}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] text-white/20 text-center">Ask staff for your table code</p>
-            </div>
+            ))}
           </div>
-        )}
+          <p className="text-[11px] text-stone-300 text-center">Ask staff for your table code</p>
+        </div>
+      )}
+
+      {!isStandalone && (installPrompt || isIos) && (
+        <div className="mt-4 w-full max-w-sm">
+          <button onClick={handleInstall}
+            className="w-full flex items-center justify-center gap-2 bg-white border border-orange-200 text-orange-700 text-sm font-bold py-3 rounded-2xl shadow-sm hover:shadow-md transition-all">
+            <Download size={15} /> Add to Home Screen
+          </button>
+          {iosHint && (
+            <div className="mt-2 bg-orange-50 border border-orange-200 rounded-2xl p-3 text-xs text-orange-800 text-center">
+              Tap <strong>Share ↗</strong> → <strong>"Add to Home Screen"</strong> in Safari
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-5 flex gap-2 flex-wrap justify-center">
+        {[
+          { icon: "⭐", label: "Review Us", href: REVIEW_URL, ext: true },
+          { icon: "📸", label: "Instagram", href: INSTAGRAM, ext: true },
+          { icon: "💬", label: "WhatsApp", href: WHATSAPP, ext: true },
+        ].map(l => (
+          <a key={l.label} href={l.href} target="_blank" rel="noreferrer"
+            className="flex items-center gap-1.5 bg-white/80 border border-white text-stone-600 text-xs font-medium px-3 py-2 rounded-2xl shadow-sm hover:shadow-md transition-all">
+            {l.icon} {l.label}
+          </a>
+        ))}
+        <button onClick={() => window.location.hash = "privacy"} className="flex items-center gap-1.5 bg-white/80 border border-white text-stone-600 text-xs font-medium px-3 py-2 rounded-2xl shadow-sm hover:shadow-md transition-all">🛡️ Privacy</button>
+        <button onClick={() => window.location.hash = "contact"} className="flex items-center gap-1.5 bg-white/80 border border-white text-stone-600 text-xs font-medium px-3 py-2 rounded-2xl shadow-sm hover:shadow-md transition-all">📞 Contact</button>
+      </div>
+      <div className="flex items-center gap-3 mt-4">
+        <p className="text-xs text-white font-semibold">Admin? <button onClick={() => window.location.hash = "admin"} className="bg-orange-500 text-white font-bold px-3 py-1 rounded-lg ml-1 shadow">Login here</button></p>
+        <span className="text-stone-200 text-[10px]">·</span>
+        <p className="text-xs text-white font-semibold">Rider? <button onClick={() => window.location.hash = "rider"} className="bg-stone-700 text-white font-bold px-3 py-1 rounded-lg ml-1 shadow">Login here</button></p>
       </div>
 
-      {/* ── Footer links ── */}
-      <div className="relative z-10 pb-8 pt-3 px-5">
-        <div className="flex gap-2 flex-wrap justify-center mb-4">
-          {[
-            { icon: "⭐", label: "Review",    href: REVIEW_URL, ext: true },
-            { icon: "📸", label: "Instagram", href: INSTAGRAM,  ext: true },
-            { icon: "💬", label: "WhatsApp",  href: WHATSAPP,   ext: true },
-          ].map(l => (
-            <a key={l.label} href={l.href} target="_blank" rel="noreferrer"
-              className="flex items-center gap-1.5 bg-white/[0.06] border border-white/10 text-white/50 text-xs font-medium px-3.5 py-2 rounded-xl hover:bg-white/10 hover:text-white/80 transition-all">
-              {l.icon} {l.label}
-            </a>
-          ))}
-          <button onClick={() => window.location.hash = "privacy"}
-            className="flex items-center gap-1.5 bg-white/[0.06] border border-white/10 text-white/50 text-xs font-medium px-3.5 py-2 rounded-xl hover:bg-white/10 transition-all">
-            🛡️ Privacy
-          </button>
-          <button onClick={() => window.location.hash = "contact"}
-            className="flex items-center gap-1.5 bg-white/[0.06] border border-white/10 text-white/50 text-xs font-medium px-3.5 py-2 rounded-xl hover:bg-white/10 transition-all">
-            📞 Contact
-          </button>
-        </div>
-
-        {/* Admin / Rider hidden login — subtle, small */}
-        <div className="flex items-center justify-center gap-4">
-          <button onClick={() => window.location.hash = "admin"}
-            className="text-[11px] text-white/20 hover:text-orange-400 transition-colors font-medium">
-            Admin Login
-          </button>
-          <span className="text-white/10">·</span>
-          <button onClick={() => window.location.hash = "rider"}
-            className="text-[11px] text-white/20 hover:text-orange-400 transition-colors font-medium">
-            Rider Login
-          </button>
-        </div>
-      </div>
-
-      {/* ── Update Gate ── */}
+      {/* ── Update Gate (landing) ── */}
       {showUpdateGate && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-          <div className="bg-[#1a0a00] border border-orange-500/20 rounded-3xl p-6 max-w-xs w-full text-center shadow-2xl">
-            <div className="w-16 h-16 rounded-2xl bg-orange-500/20 border border-orange-500/30 flex items-center justify-center text-3xl mx-auto mb-4">🔄</div>
-            <p className="font-black text-white text-lg">Update Available</p>
-            <p className="text-sm text-white/50 mt-2">A newer version of Burger Point is ready. Your cart will be kept.</p>
-            <button onClick={() => window.__bpApplyUpdate?.()}
-              className="w-full mt-5 bg-gradient-to-r from-orange-500 to-red-600 text-white py-3.5 rounded-2xl font-bold text-sm active:scale-95 transition-transform shadow-lg shadow-orange-900/50">
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-xs w-full text-center shadow-2xl">
+            <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center text-3xl mx-auto mb-3">🔄</div>
+            <p className="font-black text-stone-800 text-lg">Update Required</p>
+            <p className="text-sm text-stone-500 mt-2">A newer version of Burger Point is available. Please update first to place your order — it only takes a second!</p>
+            <button onClick={() => { window.__bpApplyUpdate?.(); }}
+              className="w-full mt-5 bg-gradient-to-r from-orange-500 to-red-600 text-white py-3 rounded-2xl font-bold text-sm active:scale-95 transition-transform">
               Update Now
             </button>
-            <button onClick={() => setShowUpdateGate(false)} className="w-full mt-2 text-xs text-white/30 py-2">Not now</button>
+            <button onClick={() => setShowUpdateGate(false)} className="w-full mt-2 text-xs text-stone-400 py-2">Not now</button>
           </div>
         </div>
       )}
