@@ -34,6 +34,11 @@ const DEFAULTS = {
   wait_delivery: 40,
   // Web push
   vapid_public_key: "",
+  // Today's Special / Promo Banner
+  special_label:        "Today's Special",
+  special_item_id:      null,
+  promo_banner_url:     null,
+  promo_banner_enabled: false,
 };
 
 // One fetch shared across every component that mounts this hook in the
