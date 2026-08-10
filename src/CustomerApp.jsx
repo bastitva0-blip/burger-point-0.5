@@ -269,45 +269,6 @@ function ItemModal({ item, onClose, onAdd }) {
   );
 }
 
-// ── CART FORCE-EXIT ───────────────────────────────────────
-// Appears after 6 s of being stuck in "validating" state.
-// Gives the customer a clear escape without waiting forever.
-function CartForceExit({ onClose }) {
-  const [visible, setVisible] = useState(false);
-  const [secs,    setSecs]    = useState(6);
-
-  useEffect(() => {
-    // Count down from 6 → 0, then reveal the button
-    const iv = setInterval(() => {
-      setSecs(s => {
-        if (s <= 1) { clearInterval(iv); setVisible(true); return 0; }
-        return s - 1;
-      });
-    }, 1000);
-    return () => clearInterval(iv);
-  }, []);
-
-  if (!visible) {
-    return (
-      <p className="text-center text-[10px] text-stone-300 mt-3 animate-pulse">
-        Stuck? Exit option in {secs}s…
-      </p>
-    );
-  }
-
-  return (
-    <div className="mt-3 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-center">
-      <p className="text-xs font-bold text-red-600 mb-1">Taking too long?</p>
-      <p className="text-[10px] text-red-400 mb-2">Your order may not have gone through. You can safely close the cart and try again.</p>
-      <button
-        onClick={onClose}
-        className="bg-red-500 text-white text-xs font-bold px-5 py-2 rounded-xl active:scale-95 transition-transform shadow-sm">
-        ✕ Close Cart
-      </button>
-    </div>
-  );
-}
-
 // ── CART DRAWER ───────────────────────────────────────────
 function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null, supabaseDown = false, menu = {}, bestsellers = new Set(), onAddSuggested, validating = false, promoBannerUrl = null }) {
   const comboSuggestions = useComboSuggestions(cart, menu);
@@ -623,8 +584,6 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
               <p className="text-center text-[10px] text-stone-400 mt-2">
                 {validating ? "Verifying your items…" : "Order sent directly to kitchen"}
               </p>
-              {/* Force-exit escape hatch — appears after 6s of being stuck validating */}
-              {validating && <CartForceExit onClose={onClose} />}
             </>
           )}
         </div>
@@ -1258,18 +1217,24 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
 
     const applyUpdate = (data) => {
       if (!data) return;
+
+      // Always merge the full row first — this ensures cancel_reason, items,
+      // and any other fields arrive in liveOrder before the status re-render.
+      setLiveOrder(prev => ({ ...prev, ...data }));
+      if (data.rider_name)  setRiderName(data.rider_name);
+      if (data.rider_phone) setRiderPhone(data.rider_phone);
+
       if (data.status) {
-        // Feature 7: push notification on status change
-        // _lastStatus is seeded below with order.status so resuming a page never
-        // fires a notification for the status that was already known on mount.
         const prevStatus = applyUpdateRef.current?._lastStatus;
+
+        // Feature 7: push notification on status change
         if (data.status !== prevStatus && "Notification" in window && Notification.permission === "granted") {
           const NOTIF_MSGS = {
-            accepted:  "👨‍🍳 Your order is being prepared!",
-            ready:     "✅ Your order is ready!",
-            dispatched:"🛵 Your rider is on the way!",
-            served:    "😊 Order delivered — enjoy!",
-            cancelled: "😔 Your order was cancelled",
+            accepted:   "👨‍🍳 Your order is being prepared!",
+            ready:      "✅ Your order is ready!",
+            dispatched: "🛵 Your rider is on the way!",
+            served:     "😊 Order delivered — enjoy!",
+            cancelled:  "😔 Your order was cancelled",
           };
           const msg = NOTIF_MSGS[data.status];
           if (msg) {
@@ -1277,19 +1242,19 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
             setTimeout(() => n.close(), 6000);
           }
         }
+
+        // Update status — triggers immediate re-render to cancelled/served screen
         setStatus(data.status);
-        // As soon as the order reaches a terminal state, wipe the persisted copies
-        // so that a page-refresh no longer shows a stale "dispatched" or "pending" screen.
+
+        // Wipe persisted copies on terminal state so a refresh doesn't show stale screen
         if (TERMINAL.has(data.status)) {
           lsRemove(LS_ACTIVE_ORDER);
           sessionStorage.removeItem(SS_ORDER);
         }
+
+        // keep ref in sync
+        applyUpdateRef.current._lastStatus = data.status;
       }
-      if (data.rider_name)  setRiderName(data.rider_name);
-      if (data.rider_phone) setRiderPhone(data.rider_phone);
-      setLiveOrder(prev => ({ ...prev, ...data }));
-      // keep ref in sync for offline handler
-      if (applyUpdateRef.current) applyUpdateRef.current._lastStatus = data.status || applyUpdateRef.current._lastStatus;
     };
     applyUpdateRef.current = applyUpdate;
     // Seed with the known status so the first fetch/realtime event doesn't
@@ -1298,19 +1263,19 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
 
     const ORDER_FIELDS = "status, rider_name, rider_phone, route_geometry, route_distance_km, route_eta_minutes, delivery_started_at, customer_lat, customer_lng, cancel_reason, items, total, pending_addon_items, pending_addon_total, addon_requested_at, addon_declined_at";
 
-    // 1. Fetch current state immediately on mount; retry once on failure
-    const fetchNow = (retryMs = 0) => {
+    // 1. Fetch current state immediately on mount; retry quickly on failure
+    const fetchNow = () => {
       supabase.from("orders").select(ORDER_FIELDS).eq("id", order.id).single()
         .then(({ data, error }) => {
-          if (!error) applyUpdate(data);
-          else if (retryMs > 0) setTimeout(() => fetchNow(0), retryMs);
+          if (!error && data) applyUpdate(data);
         });
     };
-    fetchNow(3000); // initial fetch; retry after 3 s if it fails
+    fetchNow(); // fire immediately on mount — no delay
 
     // 2. Subscribe to real-time changes — fires the instant admin updates the row.
     //    NOTE: Realtime only works if the orders table has replication enabled in Supabase
     //    (Database → Replication → supabase_realtime publication → toggle orders ON).
+    //    The subscribe() callback detects channel errors and fetches immediately as fallback.
     const channel = supabase
       .channel(`order-${order.id}`)
       .on(
@@ -1318,22 +1283,28 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
         { event: "UPDATE", schema: "public", table: "orders", filter: `id=eq.${order.id}` },
         (payload) => applyUpdate(payload.new)
       )
-      .subscribe();
+      .subscribe((channelStatus) => {
+        // If Realtime isn't working (replication not enabled, network issue, etc.)
+        // do an immediate fetch so we don't wait for the first poll tick.
+        if (channelStatus === "CHANNEL_ERROR" || channelStatus === "TIMED_OUT") {
+          fetchNow();
+        }
+      });
 
-    // 3. Always-on polling — 5s when the tab is visible (customer is watching),
+    // 3. Always-on polling — 2s when visible (fast enough to feel instant),
     //    15s when hidden (background tab / phone screen off) to save battery.
-    //    Guarantees updates even when Realtime replication is disabled on the table.
-    let pollTimer = setInterval(() => fetchNow(0), document.visibilityState === "visible" ? 5000 : 15000);
+    //    This is the safety net for when Realtime replication isn't enabled.
+    let pollTimer = setInterval(() => fetchNow(), document.visibilityState === "visible" ? 2000 : 15000);
 
     // 4. Re-fetch immediately when the customer switches back to this tab/app,
     //    and re-tune the polling interval for the new visibility state.
     const onVisible = () => {
       clearInterval(pollTimer);
       if (document.visibilityState === "visible") {
-        fetchNow(0);
-        pollTimer = setInterval(() => fetchNow(0), 5000);
+        fetchNow(); // instant catch-up on tab focus
+        pollTimer = setInterval(() => fetchNow(), 2000);
       } else {
-        pollTimer = setInterval(() => fetchNow(0), 15000);
+        pollTimer = setInterval(() => fetchNow(), 15000);
       }
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -2462,7 +2433,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     // maybeSingle() returns { data: null, error: null } when no rows match,
     // instead of throwing PGRST116 — cleaner than catching error codes.
     supabase.from("orders")
-      .select("status, rider_name, rider_phone, cancel_reason")
+      .select("status, rider_name, rider_phone")
       .eq("id", placed.id)
       .maybeSingle()
       .then(({ data, error }) => {
@@ -2485,9 +2456,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           });
           return;
         }
-        // Order found — sync status (include cancel_reason so the cancel screen
-        // renders immediately with the reason without waiting for OrderTracker's fetchNow).
-        const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone, cancel_reason: data.cancel_reason ?? placed.cancel_reason };
+        // Order found — sync status.
+        const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
         if (!ACTIVE_STATUSES.has(data.status)) {
           lsRemove(LS_ACTIVE_ORDER);
           sessionStorage.removeItem(SS_ORDER);
