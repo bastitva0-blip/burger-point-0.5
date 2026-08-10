@@ -269,6 +269,45 @@ function ItemModal({ item, onClose, onAdd }) {
   );
 }
 
+// ── CART FORCE-EXIT ───────────────────────────────────────
+// Appears after 6 s of being stuck in "validating" state.
+// Gives the customer a clear escape without waiting forever.
+function CartForceExit({ onClose }) {
+  const [visible, setVisible] = useState(false);
+  const [secs,    setSecs]    = useState(6);
+
+  useEffect(() => {
+    // Count down from 6 → 0, then reveal the button
+    const iv = setInterval(() => {
+      setSecs(s => {
+        if (s <= 1) { clearInterval(iv); setVisible(true); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  if (!visible) {
+    return (
+      <p className="text-center text-[10px] text-stone-300 mt-3 animate-pulse">
+        Stuck? Exit option in {secs}s…
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-center">
+      <p className="text-xs font-bold text-red-600 mb-1">Taking too long?</p>
+      <p className="text-[10px] text-red-400 mb-2">Your order may not have gone through. You can safely close the cart and try again.</p>
+      <button
+        onClick={onClose}
+        className="bg-red-500 text-white text-xs font-bold px-5 py-2 rounded-xl active:scale-95 transition-transform shadow-sm">
+        ✕ Close Cart
+      </button>
+    </div>
+  );
+}
+
 // ── CART DRAWER ───────────────────────────────────────────
 function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null, supabaseDown = false, menu = {}, bestsellers = new Set(), onAddSuggested, validating = false, promoBannerUrl = null }) {
   const comboSuggestions = useComboSuggestions(cart, menu);
@@ -584,6 +623,8 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
               <p className="text-center text-[10px] text-stone-400 mt-2">
                 {validating ? "Verifying your items…" : "Order sent directly to kitchen"}
               </p>
+              {/* Force-exit escape hatch — appears after 6s of being stuck validating */}
+              {validating && <CartForceExit onClose={onClose} />}
             </>
           )}
         </div>
@@ -2421,7 +2462,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     // maybeSingle() returns { data: null, error: null } when no rows match,
     // instead of throwing PGRST116 — cleaner than catching error codes.
     supabase.from("orders")
-      .select("status, rider_name, rider_phone")
+      .select("status, rider_name, rider_phone, cancel_reason")
       .eq("id", placed.id)
       .maybeSingle()
       .then(({ data, error }) => {
@@ -2444,8 +2485,9 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           });
           return;
         }
-        // Order found — sync status.
-        const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
+        // Order found — sync status (include cancel_reason so the cancel screen
+        // renders immediately with the reason without waiting for OrderTracker's fetchNow).
+        const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone, cancel_reason: data.cancel_reason ?? placed.cancel_reason };
         if (!ACTIVE_STATUSES.has(data.status)) {
           lsRemove(LS_ACTIVE_ORDER);
           sessionStorage.removeItem(SS_ORDER);
