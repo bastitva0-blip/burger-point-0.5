@@ -1280,9 +1280,9 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
       .subscribe();
 
     // 3. Always-on polling — 5s when the tab is visible (customer is watching),
-    //    5s when hidden (background tab / phone screen off).
+    //    15s when hidden (background tab / phone screen off) to save battery.
     //    Guarantees updates even when Realtime replication is disabled on the table.
-    let pollTimer = setInterval(() => fetchNow(0), document.visibilityState === "visible" ? 2000 : 5000);
+    let pollTimer = setInterval(() => fetchNow(0), document.visibilityState === "visible" ? 5000 : 15000);
 
     // 4. Re-fetch immediately when the customer switches back to this tab/app,
     //    and re-tune the polling interval for the new visibility state.
@@ -1290,9 +1290,9 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
       clearInterval(pollTimer);
       if (document.visibilityState === "visible") {
         fetchNow(0);
-        pollTimer = setInterval(() => fetchNow(0), 2000);
-      } else {
         pollTimer = setInterval(() => fetchNow(0), 5000);
+      } else {
+        pollTimer = setInterval(() => fetchNow(0), 15000);
       }
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -2414,25 +2414,22 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   useEffect(() => {
     if (!placed || !SUPABASE_READY) return;
 
-    const ageMs = Date.now() - new Date(placed.created_at).getTime();
-    // Skip verify entirely for orders placed in the last 2 minutes.
-    if (ageMs < 2 * 60 * 1000) return;
-
-    // maybeSingle() returns { data: null, error: null } when no rows match,
-    // instead of throwing PGRST116 — cleaner than catching error codes.
+    // Run immediately on mount — syncs status and catches ghost orders.
+    // maybeSingle() returns { data: null, error: null } when no rows match
+    // (avoids PGRST116 errors from .single() on missing rows).
     supabase.from("orders")
       .select("status, rider_name, rider_phone")
       .eq("id", placed.id)
       .maybeSingle()
       .then(({ data, error }) => {
         if (error) {
-          // A network/DB error on THIS verify call — skip, do not nuke the order.
+          // Network/DB error on this verify call — skip, do not nuke the order.
           console.warn("[bp] Auto-verify fetch failed (skipping):", error?.message);
           return;
         }
         if (!data) {
-          // Order is >2 min old and genuinely not in DB — confirmed ghost.
-          console.warn("[bp] Ghost order confirmed (>2 min, not in DB):", placed.id);
+          // Order not in DB — ghost order (insert never succeeded).
+          console.warn("[bp] Ghost order — not found in DB:", placed.id);
           lsRemove(LS_ACTIVE_ORDER);
           sessionStorage.removeItem(SS_ORDER);
           setPlaced(null);
@@ -2444,7 +2441,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           });
           return;
         }
-        // Order found — sync status.
+        // Order found — sync latest status into placed so OrderTracker prop stays fresh.
         const updated = { ...placed, status: data.status, rider_name: data.rider_name, rider_phone: data.rider_phone };
         if (!ACTIVE_STATUSES.has(data.status)) {
           lsRemove(LS_ACTIVE_ORDER);
