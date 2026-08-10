@@ -1280,9 +1280,9 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
       .subscribe();
 
     // 3. Always-on polling — 5s when the tab is visible (customer is watching),
-    //    15s when hidden (background tab / phone screen off) to save battery.
+    //    5s when hidden (background tab / phone screen off).
     //    Guarantees updates even when Realtime replication is disabled on the table.
-    let pollTimer = setInterval(() => fetchNow(0), document.visibilityState === "visible" ? 5000 : 15000);
+    let pollTimer = setInterval(() => fetchNow(0), document.visibilityState === "visible" ? 2000 : 5000);
 
     // 4. Re-fetch immediately when the customer switches back to this tab/app,
     //    and re-tune the polling interval for the new visibility state.
@@ -1290,9 +1290,9 @@ function OrderTracker({ order, tableLabel, onNewOrder }) {
       clearInterval(pollTimer);
       if (document.visibilityState === "visible") {
         fetchNow(0);
-        pollTimer = setInterval(() => fetchNow(0), 5000);
+        pollTimer = setInterval(() => fetchNow(0), 2000);
       } else {
-        pollTimer = setInterval(() => fetchNow(0), 15000);
+        pollTimer = setInterval(() => fetchNow(0), 5000);
       }
     };
     document.addEventListener("visibilitychange", onVisible);
