@@ -2889,13 +2889,12 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     lsSet(LS_ACTIVE_ORDER, JSON.stringify(payload));
 
     if (SUPABASE_READY) {
-      // insertWithRetry: 3 silent attempts (0s → 1.5s → 4s) before giving up.
-      // Each attempt has a 12s abort timeout so the spinner never hangs forever.
-      const err = await insertWithRetry(payload);
-      if (err) {
-        console.warn("[bp] Order save error (all attempts failed):", err);
+      try {
+        const { error } = await supabase.from("orders").insert(payload);
+        if (error) throw error;
+      } catch (err) {
+        console.warn("[bp] Order save error:", err);
         setPlacing(false);
-        // Fix 2: show error card — do NOT clear cart; keep LS so tracker survives refresh
         setOrderError({
           payload, paymentMethod, razorpayPaymentId,
           debugMessage: err?.message || String(err),
@@ -2952,13 +2951,14 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     // Use a fresh ID so there is no duplicate-key conflict if the original
     // row somehow appears between now and the insert.
     const retryPayload = { ...payload, id: crypto.randomUUID() };
-    const err = await insertWithRetry(retryPayload);
-    if (err) {
-      console.warn("[bp] Retry error (all attempts failed):", err);
-      // Update the error with the latest debug info so the user sees the current failure
+    try {
+      const { error } = await supabase.from("orders").insert(retryPayload);
+      if (error) throw error;
+    } catch (err) {
+      console.warn("[bp] Retry error:", err);
       setOrderError(prev => ({
         ...prev,
-        payload: retryPayload, // use new ID so next retry doesn't conflict
+        payload: retryPayload,
         debugMessage: err?.message || String(err),
         debugCode: err?.code || null,
       }));
