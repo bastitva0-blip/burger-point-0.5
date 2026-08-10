@@ -270,7 +270,7 @@ function ItemModal({ item, onClose, onAdd }) {
 }
 
 // ── CART DRAWER ───────────────────────────────────────────
-function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null, supabaseDown = false, menu = {}, bestsellers = new Set(), onAddSuggested, validating = false }) {
+function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClose, onQty, onRemove, onPlace, unavailableIds = new Set(), validationError = null, supabaseDown = false, menu = {}, bestsellers = new Set(), onAddSuggested, validating = false, promoBannerUrl = null }) {
   const comboSuggestions = useComboSuggestions(cart, menu);
   const [note, setNote]           = useState("");
   const [promoCode, setPromoCode] = useState("");
@@ -572,6 +572,8 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
             </>
           ) : (
             <>
+              {/* Promo banner block — shown if admin has enabled a banner */}
+              {promoBannerUrl && <PromoBannerBlock url={promoBannerUrl} />}
               <button onClick={() => onPlace({ note, total, discount, promoCode: promo?.code, deliveryFee, packingCharge, gstAmount, distanceKm: deliveryCalc?.distanceKm ?? null })}
                 disabled={!canPlace || validating}
                 className="w-full bg-gradient-to-r from-orange-500 to-red-600 text-white py-4 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2">
@@ -1897,19 +1899,72 @@ function useComboSuggestions(cart, menu) {
 // ── TODAY'S SPECIAL HOOK ─────────────────────────────────
 // Picks one item per day from bestsellers, rotating daily.
 // Same item shows all day for consistency.
-function useTodaySpecial(menu, bestsellers) {
+function useTodaySpecial(menu, bestsellers, specialItemId) {
   return useMemo(() => {
     const all = Object.values(menu).flat();
+    // If admin has pinned a specific item, use it (if it's still available)
+    if (specialItemId) {
+      const pinned = all.find(i => i.id === specialItemId && i.is_available !== false);
+      if (pinned) return pinned;
+      // Pinned item unavailable — fall through to auto-rotate below
+    }
     const bsItems = all.filter(i => bestsellers.has(i.id) && i.is_available !== false);
     if (bsItems.length === 0) return null;
     // Use day-of-year as seed so it changes daily but stays same all day
     const now = new Date();
     const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86_400_000);
     return bsItems[dayOfYear % bsItems.length];
-  }, [menu, bestsellers]);
+  }, [menu, bestsellers, specialItemId]);
 }
 
-// ── BESTSELLERS HOOK ──────────────────────────────────────
+// ── PROMO BANNER POPUP ──────────────────────────────────────────────────────
+// Full-screen on first open (dismissed per session via sessionStorage).
+// Also exported as a small inline block for use in CartDrawer.
+const SS_BANNER_DISMISSED = "bp_banner_dismissed";
+
+function PromoBannerPopup({ url, onDismiss }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => { setTimeout(() => setVisible(true), 120); }, []);
+  const dismiss = () => { setVisible(false); setTimeout(onDismiss, 300); };
+  return (
+    <div
+      className={`fixed inset-0 z-[999] flex flex-col items-center justify-center transition-all duration-300
+        ${visible ? "bg-black/75 backdrop-blur-sm" : "bg-black/0 pointer-events-none"}`}
+      onClick={dismiss}>
+      <div
+        className={`relative w-full max-w-sm mx-4 rounded-3xl overflow-hidden shadow-2xl transition-all duration-300
+          ${visible ? "scale-100 opacity-100" : "scale-90 opacity-0"}`}
+        onClick={e => e.stopPropagation()}>
+        <img src={url} alt="Promotion" className="w-full object-cover" />
+        {/* Tap anywhere outside or X to dismiss */}
+        <button onClick={dismiss}
+          className="absolute top-3 right-3 w-8 h-8 bg-black/60 text-white rounded-full text-sm font-black flex items-center justify-center shadow-lg">
+          ✕
+        </button>
+        <button onClick={dismiss}
+          className="w-full bg-orange-500 text-white font-black text-sm py-3.5 tracking-wide">
+          Order Now →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Small inline banner block shown in the cart
+function PromoBannerBlock({ url }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return (
+    <div className="relative rounded-2xl overflow-hidden shadow-sm border border-orange-100 mb-3">
+      <img src={url} alt="Promotion" className="w-full object-cover max-h-36" />
+      <button onClick={() => setDismissed(true)}
+        className="absolute top-2 right-2 w-6 h-6 bg-black/50 text-white rounded-full text-[10px] font-black flex items-center justify-center">
+        ✕
+      </button>
+    </div>
+  );
+}
+
 function useBestsellers(menu) {
   const [bestsellers, setBestsellers] = useState(() => {
     try {
@@ -2316,7 +2371,14 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   useEffect(() => { cartRef.current = cart; }, [cart]);
 
   const bestsellers = useBestsellers(menu);
-  const todaySpecial = useTodaySpecial(menu, bestsellers);
+  const todaySpecial = useTodaySpecial(menu, bestsellers, bizSettings.special_item_id);
+
+  // Promo banner — show full-screen popup once per session if enabled + has image
+  const [bannerDismissed, setBannerDismissed] = useState(
+    () => !!sessionStorage.getItem(SS_BANNER_DISMISSED)
+  );
+  const showBannerPopup = bizSettings.promo_banner_enabled && bizSettings.promo_banner_url && !bannerDismissed && !placed;
+  const dismissBanner = () => { sessionStorage.setItem(SS_BANNER_DISMISSED, "1"); setBannerDismissed(true); };
   const [bsCollapsed, setBsCollapsed] = useState(false);
   const { banner: pushBanner, allow: pushAllow, dismiss: pushDismiss } = usePushSubscription();
 
@@ -3053,7 +3115,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
                 <ItemThumb item={todaySpecial} className="w-full h-full rounded-none object-cover" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[9px] font-black text-orange-100 uppercase tracking-widest mb-0.5">⚡ Today's Special</p>
+                <p className="text-[9px] font-black text-orange-100 uppercase tracking-widest mb-0.5">⚡ {bizSettings.special_label || "Today's Special"}</p>
                 <p className="text-sm font-black text-white leading-tight truncate">{todaySpecial.name}</p>
                 {todaySpecial.description && <p className="text-[10px] text-orange-100 mt-0.5 line-clamp-1">{todaySpecial.description}</p>}
                 <p className="text-base font-black text-white mt-1">₹{todaySpecial.price}</p>
@@ -3240,7 +3302,8 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
         <CartDrawer cart={cart} tableLabel={tableLabel} orderType={orderType} customerInfo={customerInfo} settings={bizSettings}
           onClose={() => setShowCart(false)} onQty={handleQty} onRemove={i => { setCart(p => p.filter((_, x) => x !== i)); setCartValidationError(null); }} onPlace={handlePlaceAttempt}
           unavailableIds={unavailableCartIds} validationError={cartValidationError} supabaseDown={supabaseDown}
-          menu={menu} bestsellers={bestsellers} onAddSuggested={(item) => { handleAdd(item); }} validating={validating} />
+          menu={menu} bestsellers={bestsellers} onAddSuggested={(item) => { handleAdd(item); }} validating={validating}
+          promoBannerUrl={bizSettings.promo_banner_enabled ? bizSettings.promo_banner_url : null} />
       )}
       {showRazorpay && (
         <RazorpayModal amount={showRazorpay.total} customerName={customerInfo?.name || tableLabel || "Customer"} customerPhone={customerInfo?.phone}
@@ -3264,6 +3327,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       )}
       {showHistory && <OrderHistoryModal onClose={() => setShowHistory(false)} onReorder={reorder} onShareReceipt={shareReceipt} />}
       {pushBanner && <PushBanner onAllow={pushAllow} onDismiss={pushDismiss} />}
+      {showBannerPopup && <PromoBannerPopup url={bizSettings.promo_banner_url} onDismiss={dismissBanner} />}
       {showUpdateGate && (
         <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-6 max-w-xs w-full text-center shadow-2xl">
