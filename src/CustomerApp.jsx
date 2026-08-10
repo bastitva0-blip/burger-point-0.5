@@ -91,47 +91,47 @@ function ItemCard({ item, cartQty, onAdd, onQtyChange, isFav, onToggleFav, isBes
     onAdd(item);
   };
   return (
-    <div className={`flex gap-3 py-4 border-b border-stone-100 last:border-0 ${unavail ? "opacity-50" : ""}`}>
+    <div className={`flex gap-3 py-4 border-b border-white/5 last:border-0 ${unavail ? "opacity-40" : ""}`}>
       <ItemThumb item={item} className="w-20 h-20">
-        <span className="absolute top-1 right-1 w-4 h-4 border-2 border-green-600 rounded-sm bg-white flex items-center justify-center">
-          <span className="w-2 h-2 rounded-full bg-green-600" />
+        <span className="absolute top-1 right-1 w-4 h-4 border-2 border-green-500 rounded-sm bg-[#0f0800] flex items-center justify-center">
+          <span className="w-2 h-2 rounded-full bg-green-500" />
         </span>
       </ItemThumb>
       <div className="flex-1 min-w-0">
         <div className="flex items-start gap-1">
-          <p className="text-sm font-bold text-stone-800 leading-tight flex-1">{item.name}</p>
+          <p className="text-sm font-bold text-white leading-tight flex-1">{item.name}</p>
           <button onClick={() => onToggleFav(item.id)} className="p-0.5 flex-shrink-0">
-            <Heart size={14} className={isFav ? "fill-red-500 text-red-500" : "text-stone-300"} />
+            <Heart size={14} className={isFav ? "fill-red-500 text-red-500" : "text-white/20"} />
           </button>
         </div>
         {isBestseller && <div className="mt-1"><BestsellerBadge /></div>}
-        {item.description && <p className="text-[11px] text-stone-400 mt-0.5 leading-snug line-clamp-2">{item.description}</p>}
+        {item.description && <p className="text-[11px] text-white/40 mt-0.5 leading-snug line-clamp-2">{item.description}</p>}
         <div className="flex items-center gap-1 mt-1">
-          <p className="text-sm font-black text-stone-800">₹{item.price}</p>
-          {item.variants && <span className="text-xs text-stone-400 ml-1">onwards</span>}
+          <p className="text-sm font-black text-white">₹{item.price}</p>
+          {item.variants && <span className="text-xs text-white/30 ml-1">onwards</span>}
         </div>
         {item.variants && (
           <div className="flex gap-1 mt-1 flex-wrap">
             {item.variants.map((v, i) => (
-              <span key={i} className="text-[10px] bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded-md font-medium">{v.label} ₹{v.price}</span>
+              <span key={i} className="text-[10px] bg-white/10 text-white/50 px-1.5 py-0.5 rounded-md font-medium">{v.label} ₹{v.price}</span>
             ))}
           </div>
         )}
         {item.addons?.length > 0 && (
-          <p className="text-[10px] text-orange-500 mt-1">+ Customisable</p>
+          <p className="text-[10px] text-orange-400 mt-1">+ Customisable</p>
         )}
       </div>
       {unavail ? (
-        <span className="self-center text-[10px] bg-stone-100 text-stone-400 font-bold px-2 py-1 rounded-xl flex-shrink-0">Sold Out</span>
+        <span className="self-center text-[10px] bg-white/10 text-white/30 font-bold px-2 py-1 rounded-xl flex-shrink-0">Sold Out</span>
       ) : cartQty > 0 && !item.variants ? (
-        <div className="self-center flex items-center gap-1 bg-orange-500 rounded-xl px-2 py-1.5 flex-shrink-0 shadow-md">
+        <div className="self-center flex items-center gap-1 bg-orange-500 rounded-xl px-2 py-1.5 flex-shrink-0 shadow-lg shadow-orange-900/50">
           <button onClick={() => onQtyChange(cartQty - 1)} className="w-7 h-7 flex items-center justify-center"><Minus size={12} className="text-white" /></button>
           <span className="text-xs font-black text-white w-4 text-center">{cartQty}</span>
           <button onClick={() => onQtyChange(cartQty + 1)} className="w-7 h-7 flex items-center justify-center"><Plus size={12} className="text-white" /></button>
         </div>
       ) : (
         <button onClick={handleAdd}
-          className={`self-center flex items-center gap-1 bg-white border-2 border-orange-400 text-orange-600 px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all hover:bg-orange-500 hover:text-white flex-shrink-0 relative ${popping ? "add-pop" : ""}`}>
+          className={`self-center flex items-center gap-1 bg-transparent border-2 border-orange-500/60 text-orange-400 px-3 py-1.5 rounded-xl text-xs font-bold active:scale-95 transition-all hover:bg-orange-500 hover:text-white hover:border-orange-500 flex-shrink-0 relative ${popping ? "add-pop" : ""}`}>
           <Plus size={12} /> ADD
           {cartQty > 0 && item.variants && (
             <span className="absolute -top-2 -right-2 bg-orange-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">{cartQty}</span>
@@ -340,57 +340,57 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full bg-white rounded-t-3xl max-w-xl mx-auto flex flex-col" style={{ maxHeight: "90vh" }} onClick={e => e.stopPropagation()}>
-        <div className="w-10 h-1 bg-stone-200 rounded-full mx-auto mt-3 flex-shrink-0" />
-        <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-stone-100 flex-shrink-0">
-          <h3 className="font-bold text-stone-800 text-base flex items-center gap-2">
-            <ShoppingCart size={18} className="text-orange-500" /> Your Cart
+    <div className="fixed inset-0 z-40 flex items-end bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full bg-[#1a0a00] rounded-t-3xl max-w-xl mx-auto flex flex-col border-t border-white/10" style={{ maxHeight: "90vh" }} onClick={e => e.stopPropagation()}>
+        <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mt-3 flex-shrink-0" />
+        <div className="flex items-center justify-between px-5 pt-3 pb-3 border-b border-white/5 flex-shrink-0">
+          <h3 className="font-bold text-white text-base flex items-center gap-2">
+            <ShoppingCart size={18} className="text-orange-400" /> Your Cart
           </h3>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] bg-orange-100 text-orange-700 font-bold px-2 py-1 rounded-lg">{tableLabel || typeLabel || "Menu"}</span>
-            <button onClick={onClose} className="w-7 h-7 rounded-full bg-stone-100 flex items-center justify-center"><X size={14} className="text-stone-500" /></button>
+            <span className="text-[11px] bg-orange-500/20 text-orange-400 font-bold px-2 py-1 rounded-lg">{tableLabel || typeLabel || "Menu"}</span>
+            <button onClick={onClose} className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center"><X size={14} className="text-white/50" /></button>
           </div>
         </div>
         {customerInfo && (
-          <div className="px-5 py-2 bg-orange-50 border-b border-orange-100 flex-shrink-0 flex items-center gap-2">
-            <User size={13} className="text-orange-500" />
-            <span className="text-xs font-bold text-stone-700">{customerInfo.name}</span>
-            <span className="text-[11px] text-stone-400">{customerInfo.phone}</span>
+          <div className="px-5 py-2 bg-orange-500/10 border-b border-orange-500/10 flex-shrink-0 flex items-center gap-2">
+            <User size={13} className="text-orange-400" />
+            <span className="text-xs font-bold text-white">{customerInfo.name}</span>
+            <span className="text-[11px] text-white/40">{customerInfo.phone}</span>
           </div>
         )}
 
         <div className="flex-1 overflow-y-auto px-5 py-3">
-          {/* Feature 8: unavailability warning */}
           {(() => {
             const affected = cart.filter(it => unavailableIds.has(it.id));
             if (!affected.length) return null;
             return (
-              <div className="bg-amber-50 border border-amber-300 rounded-2xl px-4 py-3 mb-3">
+              <div className="bg-amber-900/40 border border-amber-500/30 rounded-2xl px-4 py-3 mb-3">
                 {affected.map(it => (
-                  <p key={it.id} className="text-xs font-bold text-amber-800">⚠️ {it.name} is no longer available — please remove it before ordering.</p>
+                  <p key={it.id} className="text-xs font-bold text-amber-300">⚠️ {it.name} is no longer available — please remove it before ordering.</p>
                 ))}
               </div>
             );
           })()}
+
           {/* Items */}
           {cart.map((item, i) => (
-            <div key={i} className={`flex items-start gap-3 py-3 border-b border-stone-50 last:border-0 ${unavailableIds.has(item.id) ? "bg-red-50 rounded-xl px-2 border-red-200 border" : ""}`}>
+            <div key={i} className={`flex items-start gap-3 py-3 border-b border-white/5 last:border-0 ${unavailableIds.has(item.id) ? "bg-red-900/20 rounded-xl px-2 border border-red-500/20" : ""}`}>
               <ItemThumb item={item} className="w-12 h-12" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-stone-800 leading-tight">{item.name}</p>
-                {item.selectedVariant && <p className="text-xs text-stone-400">{item.selectedVariant}</p>}
+                <p className="text-sm font-bold text-white leading-tight">{item.name}</p>
+                {item.selectedVariant && <p className="text-xs text-white/40">{item.selectedVariant}</p>}
                 {item.addonLabels?.length > 0 && (
-                  <p className="text-[11px] text-orange-500 mt-0.5">{item.addonLabels.join(" · ")}</p>
+                  <p className="text-[11px] text-orange-400 mt-0.5">{item.addonLabels.join(" · ")}</p>
                 )}
-                <p className="text-xs font-bold text-orange-600 mt-0.5">₹{item.finalPrice}</p>
+                <p className="text-xs font-bold text-orange-400 mt-0.5">₹{item.finalPrice}</p>
               </div>
               <div className="flex flex-col items-end gap-1.5">
-                <button onClick={() => onRemove(i)} className="text-stone-300 hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
-                <div className="flex items-center gap-1.5 bg-orange-50 border border-orange-200 rounded-xl px-2 py-1">
-                  <button onClick={() => onQty(i, item.qty - 1)} className="w-6 h-6 flex items-center justify-center"><Minus size={11} className="text-stone-600" /></button>
-                  <span className="text-xs font-black text-stone-800 w-4 text-center">{item.qty}</span>
-                  <button onClick={() => onQty(i, item.qty + 1)} className="w-6 h-6 flex items-center justify-center"><Plus size={11} className="text-stone-600" /></button>
+                <button onClick={() => onRemove(i)} className="text-white/20 hover:text-red-400 transition-colors"><Trash2 size={13} /></button>
+                <div className="flex items-center gap-1.5 bg-white/10 border border-white/10 rounded-xl px-2 py-1">
+                  <button onClick={() => onQty(i, item.qty - 1)} className="w-6 h-6 flex items-center justify-center"><Minus size={11} className="text-white/60" /></button>
+                  <span className="text-xs font-black text-white w-4 text-center">{item.qty}</span>
+                  <button onClick={() => onQty(i, item.qty + 1)} className="w-6 h-6 flex items-center justify-center"><Plus size={11} className="text-white/60" /></button>
                 </div>
               </div>
             </div>
@@ -398,30 +398,30 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
 
           {/* Note */}
           <div className="mt-4">
-            <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Special Instructions</p>
+            <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">Special Instructions</p>
             <textarea value={note} onChange={e => setNote(e.target.value)}
               placeholder="Less spicy, no onion, extra sauce…"
-              className="w-full text-xs text-stone-700 bg-stone-50 border border-stone-200 rounded-2xl p-3 resize-none h-16 outline-none focus:border-orange-400 transition-colors" />
+              className="w-full text-xs text-white/70 bg-white/5 border border-white/10 rounded-2xl p-3 resize-none h-16 outline-none focus:border-orange-500/50 transition-colors placeholder-white/20" />
           </div>
 
-          {/* 🎉 Super Saver Combo Suggestions */}
+          {/* Combo suggestions */}
           {comboSuggestions.length > 0 && (
             <div className="mt-3 mb-2">
-              <p className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-2">🎉 Super Saver!</p>
+              <p className="text-[10px] font-black text-green-400 uppercase tracking-widest mb-2">🎉 Super Saver!</p>
               <div className="space-y-2">
                 {comboSuggestions.map(({ combo }) => (
-                  <div key={combo.id} className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-3 flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-green-100">
+                  <div key={combo.id} className="bg-green-900/30 border border-green-500/20 rounded-2xl p-3 flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-white/10">
                       <ItemThumb item={combo} className="w-full h-full rounded-none object-cover" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[10px] font-black text-green-700 mb-0.5">Better Value Combo</p>
-                      <p className="text-xs font-bold text-stone-800 leading-tight">{combo.name}</p>
-                      {combo.description && <p className="text-[9px] text-stone-500 mt-0.5 line-clamp-1">{combo.description}</p>}
-                      <p className="text-sm font-black text-green-600 mt-0.5">₹{combo.price}</p>
+                      <p className="text-[10px] font-black text-green-400 mb-0.5">Better Value Combo</p>
+                      <p className="text-xs font-bold text-white leading-tight">{combo.name}</p>
+                      {combo.description && <p className="text-[9px] text-white/40 mt-0.5 line-clamp-1">{combo.description}</p>}
+                      <p className="text-sm font-black text-green-400 mt-0.5">₹{combo.price}</p>
                     </div>
                     <button onClick={() => onAddSuggested && onAddSuggested(combo)}
-                      className="flex-shrink-0 bg-green-500 text-white font-black text-xs px-3 py-2 rounded-xl active:scale-95 transition-all shadow-sm">
+                      className="flex-shrink-0 bg-green-500 text-white font-black text-xs px-3 py-2 rounded-xl active:scale-95 transition-all">
                       ADD
                     </button>
                   </div>
@@ -430,31 +430,29 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
             </div>
           )}
 
-          {/* 🛒 People Also Ordered */}
+          {/* People also ordered */}
           {(() => {
             const cartIds = new Set(cart.map(c => c.id));
             const allItems = Object.values(menu).flat();
             const cartCats = new Set(cart.map(c => allItems.find(i => i.id === c.id)?.category).filter(Boolean));
             const suggestions = allItems.filter(i =>
-              bestsellers.has(i.id) &&
-              !cartIds.has(i.id) &&
-              i.is_available !== false &&
+              bestsellers.has(i.id) && !cartIds.has(i.id) && i.is_available !== false &&
               (cartCats.has(i.category) || cartCats.size === 0)
             ).slice(0, 4);
             if (suggestions.length === 0) return null;
             return (
               <div className="mt-3 mb-3">
-                <p className="text-[10px] font-black text-stone-500 uppercase tracking-widest mb-2">🛒 People Also Ordered</p>
+                <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">🛒 People Also Ordered</p>
                 <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
                   {suggestions.map(item => (
                     <button key={item.id} onClick={() => onAddSuggested && onAddSuggested(item)}
-                      className="flex-shrink-0 bg-orange-50 border border-orange-100 rounded-2xl p-2 flex items-center gap-2 active:scale-95 transition-all min-w-[140px]">
-                      <div className="w-10 h-10 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
+                      className="flex-shrink-0 bg-white/[0.06] border border-white/10 rounded-2xl p-2 flex items-center gap-2 active:scale-95 transition-all min-w-[140px]">
+                      <div className="w-10 h-10 rounded-xl overflow-hidden flex-shrink-0 bg-white/10">
                         <ItemThumb item={item} className="w-full h-full rounded-none object-cover" />
                       </div>
                       <div className="flex-1 min-w-0 text-left">
-                        <p className="text-[10px] font-bold text-stone-800 leading-tight line-clamp-2">{item.name}</p>
-                        <p className="text-[10px] font-black text-orange-600 mt-0.5">+ ₹{item.price}</p>
+                        <p className="text-[10px] font-bold text-white leading-tight line-clamp-2">{item.name}</p>
+                        <p className="text-[10px] font-black text-orange-400 mt-0.5">+ ₹{item.price}</p>
                       </div>
                     </button>
                   ))}
@@ -465,47 +463,47 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
 
           {/* Promo code */}
           <div className="mt-4">
-            <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2 flex items-center gap-1"><Tag size={10} /> Promo Code</p>
+            <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2 flex items-center gap-1"><Tag size={10} /> Promo Code</p>
             {promo ? (
-              <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-2xl px-4 py-3">
+              <div className="flex items-center justify-between bg-green-900/30 border border-green-500/20 rounded-2xl px-4 py-3">
                 <div>
-                  <p className="text-xs font-bold text-green-700">🎉 "{promo.code}" applied!</p>
-                  <p className="text-xs text-green-600">You saved ₹{discount}</p>
+                  <p className="text-xs font-bold text-green-400">🎉 "{promo.code}" applied!</p>
+                  <p className="text-xs text-green-500">You saved ₹{discount}</p>
                 </div>
-                <button onClick={() => { setPromo(null); setPromoCode(""); }} className="text-xs text-stone-400 hover:text-red-500"><X size={14} /></button>
+                <button onClick={() => { setPromo(null); setPromoCode(""); }} className="text-white/30 hover:text-red-400"><X size={14} /></button>
               </div>
             ) : (
               <div className="flex gap-2">
                 <input value={promoCode} onChange={e => { setPromoCode(e.target.value.toUpperCase()); setPromoErr(""); }}
                   placeholder="Enter code (e.g. BURGER10)"
-                  className="flex-1 text-sm border-2 border-stone-200 focus:border-orange-400 rounded-xl px-3 py-2.5 outline-none text-stone-700 uppercase font-mono" />
+                  className="flex-1 text-sm bg-white/5 border-2 border-white/10 focus:border-orange-500/50 rounded-xl px-3 py-2.5 outline-none text-white uppercase font-mono placeholder-white/20" />
                 <button onClick={applyPromo} disabled={applying || !promoCode.trim()}
                   className="bg-orange-500 text-white text-xs font-bold px-4 rounded-xl disabled:opacity-50">
                   {applying ? "…" : "Apply"}
                 </button>
               </div>
             )}
-            {promoErr && <p className="text-red-500 text-xs mt-1">{promoErr}</p>}
+            {promoErr && <p className="text-red-400 text-xs mt-1">{promoErr}</p>}
           </div>
 
           {/* Bill */}
-          <div className="mt-4 bg-orange-50 rounded-2xl p-4 border border-orange-100">
-            <div className="flex justify-between text-sm text-stone-600 mb-1">
+          <div className="mt-4 bg-white/[0.04] rounded-2xl p-4 border border-white/10">
+            <div className="flex justify-between text-sm text-white/60 mb-1">
               <span>Subtotal</span><span>₹{subtotal}</span>
             </div>
             {discount > 0 && (
-              <div className="flex justify-between text-sm text-green-600 mb-1">
+              <div className="flex justify-between text-sm text-green-400 mb-1">
                 <span>Discount ({promo.code})</span><span>−₹{discount}</span>
               </div>
             )}
             {orderType === "delivery" && deliveryCalc?.deliverable && (
               <>
-                <div className="flex justify-between text-sm text-stone-600 mb-1">
+                <div className="flex justify-between text-sm text-white/60 mb-1">
                   <span>Delivery {fetchingDist ? "(checking…)" : deliveryCalc.distanceKm != null ? `(~${deliveryCalc.distanceKm.toFixed(1)} km${isApproxDist ? " approx" : " road"})` : ""}</span>
                   <span>{deliveryCalc.freeDelivery ? "FREE" : `₹${deliveryFee}`}</span>
                 </div>
                 {isApproxDist && !fetchingDist && (
-                  <div className="flex items-start gap-1.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-2 text-xs text-amber-700">
+                  <div className="flex items-start gap-1.5 bg-amber-900/30 border border-amber-500/20 rounded-xl px-3 py-2 mb-2 text-xs text-amber-300">
                     <span className="flex-shrink-0">⚠️</span>
                     <span>Distance is approximate — road routing unavailable right now. Actual delivery fee may vary slightly.</span>
                   </div>
@@ -513,38 +511,38 @@ function CartDrawer({ cart, tableLabel, orderType, customerInfo, settings, onClo
               </>
             )}
             {packingCharge > 0 && (
-              <div className="flex justify-between text-sm text-stone-600 mb-1">
+              <div className="flex justify-between text-sm text-white/60 mb-1">
                 <span>Packing Charge</span><span>₹{packingCharge}</span>
               </div>
             )}
             {gstAmount > 0 && (
-              <div className="flex justify-between text-sm text-stone-600 mb-1">
+              <div className="flex justify-between text-sm text-white/60 mb-1">
                 <span>GST ({settings.gst_percent}%)</span><span>₹{gstAmount}</span>
               </div>
             )}
-            <div className="flex justify-between text-sm font-bold text-stone-800 border-t border-orange-100 pt-2 mt-1">
-              <span>Total</span><span className="text-orange-600">₹{total}</span>
+            <div className="flex justify-between text-sm font-bold text-white border-t border-white/10 pt-2 mt-1">
+              <span>Total</span><span className="text-orange-400">₹{total}</span>
             </div>
           </div>
 
           {blockedByDeliveryRadius && (
-            <div className="mt-3 bg-red-50 border border-red-200 rounded-2xl p-3 text-xs text-red-600">{deliveryCalc.reason}</div>
+            <div className="mt-3 bg-red-900/30 border border-red-500/20 rounded-2xl p-3 text-xs text-red-400">{deliveryCalc.reason}</div>
           )}
           {belowMinOrder && !blockedByDeliveryRadius && (
-            <div className="mt-3 bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-700">
+            <div className="mt-3 bg-amber-900/30 border border-amber-500/20 rounded-2xl p-3 text-xs text-amber-300">
               Minimum order is ₹{settings.min_order_value} — add ₹{settings.min_order_value - subtotal} more to continue.
             </div>
           )}
           <div className="h-4" />
         </div>
 
-        <div className="px-5 pb-6 pt-3 border-t border-stone-100 flex-shrink-0">
+        <div className="px-5 pb-6 pt-3 border-t border-white/5 flex-shrink-0">
           {validationError && (
-            <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 mb-3 text-xs text-red-700 font-medium">{validationError}</div>
+            <div className="bg-red-900/30 border border-red-500/20 rounded-2xl px-4 py-3 mb-3 text-xs text-red-400 font-medium">{validationError}</div>
           )}
           {supabaseDown ? (
             <>
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mb-3 text-xs text-amber-800 font-medium text-center">
+              <div className="bg-amber-900/30 border border-amber-500/20 rounded-2xl px-4 py-3 mb-3 text-xs text-amber-300 font-medium text-center">
                 ⚠️ Our server is temporarily down. Place your order via WhatsApp!
               </div>
               <button
@@ -3061,28 +3059,28 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
   const activeCatData = visibleCategories.find(c => c.id === activeCat);
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
+    <div className="min-h-screen bg-[#0f0800] flex flex-col">
       {/* Header */}
-      <div className="sticky top-0 z-30 bg-white border-b border-stone-100">
+      <div className="sticky top-0 z-30 bg-[#1a0a00]/95 backdrop-blur-xl border-b border-white/5">
         <div className="max-w-2xl mx-auto px-3 pt-2 pb-1.5">
 
           {/* Location bar — delivery only */}
           {orderType === "delivery" && (
             <button
               onClick={() => setShowInfoModal(true)}
-              className="w-full flex items-center gap-1.5 bg-orange-50 border border-orange-200 rounded-xl px-2.5 py-1.5 mb-1.5 active:scale-[0.98] transition-transform text-left">
-              <MapPin size={12} className="text-orange-500 flex-shrink-0" />
+              className="w-full flex items-center gap-1.5 bg-orange-500/10 border border-orange-500/20 rounded-xl px-2.5 py-1.5 mb-1.5 active:scale-[0.98] transition-transform text-left">
+              <MapPin size={12} className="text-orange-400 flex-shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-[9px] font-bold text-orange-500 uppercase tracking-wider leading-none">
+                <p className="text-[9px] font-bold text-orange-400 uppercase tracking-wider leading-none">
                   {orderType === "delivery" ? "Delivering to" : "Takeaway"}
                 </p>
-                <p className="text-[11px] font-bold text-stone-800 truncate leading-tight">
+                <p className="text-[11px] font-bold text-white truncate leading-tight">
                   {orderType === "delivery"
                     ? (customerInfo?.address || "Add delivery address")
                     : "Burger Point, Jankipuram"}
                 </p>
               </div>
-              <span className="text-[9px] font-bold text-orange-500 flex-shrink-0">
+              <span className="text-[9px] font-bold text-orange-400 flex-shrink-0">
                 {customerInfo?.name ? "Change ›" : "Add ›"}
               </span>
             </button>
@@ -3091,19 +3089,19 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           {/* Top row — logo + actions + search */}
           <div className="flex items-center gap-2">
             <span className="text-lg flex-shrink-0">🍔</span>
-            <div className="flex-1 flex items-center gap-2 bg-stone-100 rounded-xl px-2.5 py-1.5">
-              <Search size={12} className="text-stone-400 flex-shrink-0" />
+            <div className="flex-1 flex items-center gap-2 bg-white/10 rounded-xl px-2.5 py-1.5">
+              <Search size={12} className="text-white/40 flex-shrink-0" />
               <input value={search} onChange={e => { setSearch(e.target.value); setShowFavs(false); }} placeholder="Search menu…"
-                className="flex-1 text-xs bg-transparent outline-none text-stone-700 placeholder-stone-400" />
-              {search && <button onClick={() => setSearch("")}><X size={11} className="text-stone-400" /></button>}
+                className="flex-1 text-xs bg-transparent outline-none text-white placeholder-white/30" />
+              {search && <button onClick={() => setSearch("")}><X size={11} className="text-white/40" /></button>}
             </div>
-            <button onClick={() => setShowHistory(true)} className="w-7 h-7 rounded-lg bg-stone-100 flex items-center justify-center flex-shrink-0">
-              <History size={13} className="text-stone-500" />
+            <button onClick={() => setShowHistory(true)} className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
+              <History size={13} className="text-white/50" />
             </button>
             <span className="bg-gradient-to-r from-orange-500 to-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-lg shadow-sm flex-shrink-0">
               {tableLabel || typeLabel || "Menu"}
             </span>
-            <button onClick={() => { clearTableSession(); window.location.hash = ""; }} className="text-[10px] text-stone-400 flex-shrink-0">✕</button>
+            <button onClick={() => { clearTableSession(); window.location.hash = ""; }} className="text-[10px] text-white/30 flex-shrink-0">✕</button>
           </div>
         </div>
 
@@ -3134,38 +3132,36 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
             <div className="flex items-center justify-between mb-2 cursor-pointer" onClick={() => setBsCollapsed(c => !c)}>
               <div className="flex items-center gap-1.5">
                 <span className="text-sm">🔥</span>
-                <p className="text-sm font-black text-stone-800">Bestsellers</p>
+                <p className="text-sm font-black text-white">Bestsellers</p>
               </div>
-              <span className="text-[10px] text-stone-400 font-semibold">{bsCollapsed ? "▼ Show" : "▲ Hide"}</span>
+              <span className="text-[10px] text-white/30 font-semibold">{bsCollapsed ? "▼ Show" : "▲ Hide"}</span>
             </div>
             {bsCollapsed ? (
-              /* Collapsed: compact horizontal strip */
               <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
                 {Object.values(menu).flat().filter(i => bestsellers.has(i.id) && i.is_available !== false).slice(0, 8).map(item => (
                   <button key={item.id} onClick={() => setItemModal(item)}
-                    className="flex-shrink-0 flex items-center gap-1.5 bg-orange-50 border border-orange-100 rounded-xl px-2 py-1.5 active:scale-95 transition-transform">
-                    <div className="w-7 h-7 rounded-lg overflow-hidden flex-shrink-0 bg-stone-200">
+                    className="flex-shrink-0 flex items-center gap-1.5 bg-white/[0.06] border border-white/10 rounded-xl px-2 py-1.5 active:scale-95 transition-transform">
+                    <div className="w-7 h-7 rounded-lg overflow-hidden flex-shrink-0 bg-white/10">
                       <ItemThumb item={item} className="w-full h-full rounded-none" />
                     </div>
                     <div>
-                      <p className="text-[10px] font-bold text-stone-800 whitespace-nowrap max-w-[70px] truncate">{item.name}</p>
-                      <p className="text-[9px] font-black text-orange-600">₹{item.price}</p>
+                      <p className="text-[10px] font-bold text-white whitespace-nowrap max-w-[70px] truncate">{item.name}</p>
+                      <p className="text-[9px] font-black text-orange-400">₹{item.price}</p>
                     </div>
                   </button>
                 ))}
               </div>
             ) : (
-              /* Expanded: 2-column grid */
               <div className="grid grid-cols-2 gap-2">
                 {Object.values(menu).flat().filter(i => bestsellers.has(i.id) && i.is_available !== false).slice(0, 6).map(item => (
                   <button key={item.id} onClick={() => setItemModal(item)}
-                    className="bg-white border border-stone-100 rounded-2xl p-2 flex items-center gap-2 shadow-sm active:scale-[0.97] transition-all text-left">
-                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100">
+                    className="bg-white/[0.06] border border-white/10 rounded-2xl p-2 flex items-center gap-2 active:scale-[0.97] transition-all text-left">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-white/10">
                       <ItemThumb item={item} className="w-full h-full rounded-none object-cover" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[11px] font-bold text-stone-800 leading-tight line-clamp-2">{item.name}</p>
-                      <p className="text-[11px] font-black text-orange-600 mt-0.5">₹{item.price}</p>
+                      <p className="text-[11px] font-bold text-white leading-tight line-clamp-2">{item.name}</p>
+                      <p className="text-[11px] font-black text-orange-400 mt-0.5">₹{item.price}</p>
                     </div>
                   </button>
                 ))}
@@ -3179,7 +3175,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           !menuLoaded ? <CategoryBarSkeleton /> : (
             <div ref={catBarRef} className="flex gap-1.5 px-3 py-1.5 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
               <button onClick={() => { setShowFavs(f => !f); setActiveCat("burgers"); }}
-                className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${showFavs ? "bg-red-500 text-white" : "bg-stone-100 text-stone-500"}`}>
+                className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${showFavs ? "bg-red-500 text-white" : "bg-white/10 text-white/50"}`}>
                 <Heart size={9} className={showFavs ? "fill-white" : ""} /> Favs {favs.length > 0 && `(${favs.length})`}
               </button>
               {visibleCategories.map(c => (
@@ -3191,7 +3187,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
                     const el = document.getElementById(`cat-section-${c.id}`);
                     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
                   }}
-                  className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${!showFavs && activeCat === c.id ? "bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm" : "bg-stone-100 text-stone-500"}`}>
+                  className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${!showFavs && activeCat === c.id ? "bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm" : "bg-white/10 text-white/50"}`}>
                   {c.emoji} {c.label}
                 </button>
               ))}
@@ -3202,24 +3198,24 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
 
       {/* Fix 3: no-live-ordering warning when Supabase env vars missing */}
       {!SUPABASE_READY && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center gap-2 max-w-2xl mx-auto w-full">
-          <span className="text-amber-600 text-xs">⚠️</span>
-          <p className="text-xs text-amber-800 font-medium flex-1">Live ordering unavailable — please call us to order: <a href="tel:+919194008822" className="font-bold underline">+91 91940 08822</a></p>
+        <div className="bg-amber-900/40 border-b border-amber-500/20 px-4 py-2.5 flex items-center gap-2 max-w-2xl mx-auto w-full">
+          <span className="text-amber-400 text-xs">⚠️</span>
+          <p className="text-xs text-amber-300 font-medium flex-1">Live ordering unavailable — please call us to order: <a href="tel:+919194008822" className="font-bold underline">+91 91940 08822</a></p>
         </div>
       )}
       {/* Server down banner — env vars set but Supabase unreachable */}
       {SUPABASE_READY && supabaseDown && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center gap-2 max-w-2xl mx-auto w-full">
+        <div className="bg-amber-900/40 border-b border-amber-500/20 px-4 py-2.5 flex items-center gap-2 max-w-2xl mx-auto w-full">
           <span className="text-lg">⚠️</span>
-          <p className="text-xs text-amber-800 font-medium flex-1">
+          <p className="text-xs text-amber-300 font-medium flex-1">
             Server temporarily down — <strong>add items to cart</strong> and order directly via WhatsApp!
           </p>
         </div>
       )}
       {/* Fix 4: stale menu warning when showing cached/hardcoded items */}
       {menuIsStale && SUPABASE_READY && menuLoaded && (
-        <div className="bg-stone-100 border-b border-stone-200 px-4 py-2 max-w-2xl mx-auto w-full">
-          <p className="text-xs text-stone-500 text-center">Showing cached menu — prices may differ. <a href="tel:+919194008822" className="text-orange-500 font-bold">Call to confirm.</a></p>
+        <div className="bg-white/5 border-b border-white/5 px-4 py-2 max-w-2xl mx-auto w-full">
+          <p className="text-xs text-white/40 text-center">Showing cached menu — prices may differ. <a href="tel:+919194008822" className="text-orange-400 font-bold">Call to confirm.</a></p>
         </div>
       )}
 
@@ -3229,15 +3225,15 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
           <MenuSkeleton count={5} />
         ) : (search || showFavs) ? (
           <>
-            <p className="text-xs text-stone-400 font-medium py-3">
+            <p className="text-xs text-white/30 font-medium py-3">
               {showFavs ? `${filteredItems.length} saved item${filteredItems.length !== 1 ? "s" : ""}` : `${filteredItems.length} result${filteredItems.length !== 1 ? "s" : ""} for "${search}"`}
             </p>
             {filteredItems.length === 0 ? (
               <div className="flex flex-col items-center text-center py-16 px-4">
                 <span className="text-4xl mb-3">{showFavs ? "❤️" : "🔍"}</span>
-                <p className="text-sm font-bold text-stone-700">{showFavs ? "No favourites yet" : `No items match "${search}"`}</p>
-                <p className="text-xs text-stone-400 mt-1 max-w-[220px]">{showFavs ? "Tap the ♡ on any item to save it here." : "Try a different spelling or browse categories."}</p>
-                <button onClick={() => { setSearch(""); setShowFavs(false); }} className="mt-4 text-xs font-bold text-orange-600 bg-orange-50 px-4 py-2 rounded-full">Browse Menu</button>
+                <p className="text-sm font-bold text-white">{showFavs ? "No favourites yet" : `No items match "${search}"`}</p>
+                <p className="text-xs text-white/30 mt-1 max-w-[220px]">{showFavs ? "Tap the ♡ on any item to save it here." : "Try a different spelling or browse categories."}</p>
+                <button onClick={() => { setSearch(""); setShowFavs(false); }} className="mt-4 text-xs font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-4 py-2 rounded-full">Browse Menu</button>
               </div>
             ) : filteredItems.map(item => (
               <ItemCard key={item.id} item={item}
@@ -3259,12 +3255,12 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
                 {/* Category header with image */}
                 <div className="my-3 relative rounded-2xl overflow-hidden h-24">
                   <img src={cat.img} alt={cat.label}
-                    onError={e => { e.target.parentElement.style.background = "linear-gradient(to right,#fed7aa,#fef3c7)"; e.target.style.display = "none"; }}
+                    onError={e => { e.target.parentElement.style.background = "linear-gradient(to right,#2d1200,#1a0a00)"; e.target.style.display = "none"; }}
                     className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 bg-gradient-to-r from-black/60 to-transparent flex items-end p-4">
+                  <div className="absolute inset-0 bg-gradient-to-r from-black/70 to-transparent flex items-end p-4">
                     <div>
                       <p className="text-white font-black text-base leading-tight">{cat.emoji} {cat.label}</p>
-                      <p className="text-white/70 text-xs">{catItems.length} items</p>
+                      <p className="text-white/60 text-xs">{catItems.length} items</p>
                     </div>
                   </div>
                 </div>
