@@ -2,9 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
-    <link rel="shortcut icon" href="/favicon.ico" /> 
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <!-- Favicon — all point to the same icon file so Google's crawler
+         never hits a 404 regardless of which path it tries -->
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="shortcut icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
+    <!-- image_src: the tag Google explicitly looks for when picking a search thumbnail -->
+    <link rel="image_src" href="https://www.burgerpoint.co.in/icon-512.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
     <meta name="theme-color" content="#E85D04" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -53,7 +58,7 @@
     <!-- ═══════════════════════════════════════════════
          OPEN GRAPH (WhatsApp / Facebook previews)
     ═══════════════════════════════════════════════ -->
-    <meta property="og:type" content="restaurant" />
+    <meta property="og:type" content="website" />
     <meta property="og:title" content="Burger Point — Best Fast Food in Jankipuram, Lucknow" />
     <meta property="og:description" content="Burgers, momos, indo-chinese, pizza & more. Loved by students across Jankipuram. Order online or walk in!" />
     <meta property="og:url" content="https://www.burgerpoint.co.in/" />
@@ -69,7 +74,7 @@
     <!-- ═══════════════════════════════════════════════
          TWITTER CARD
     ═══════════════════════════════════════════════ -->
-    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Burger Point — Best Fast Food in Jankipuram, Lucknow" />
     <meta name="twitter:description" content="Burgers, momos, indo-chinese, pizza & shakes. Order online now!" />
     <meta name="twitter:image" content="https://www.burgerpoint.co.in/icon-512.png" />
@@ -111,7 +116,7 @@
         "longitude": 81.0140
       },
       "hasMap": "https://maps.google.com/?q=Burger+Point+Jankipuram+Lucknow",
-      "telephone": "+91-XXXXXXXXXX",
+      "telephone": "+91-9194008822",
       "openingHoursSpecification": [
         {
           "@type": "OpeningHoursSpecification",
