@@ -2313,6 +2313,38 @@ function compressImage(file, maxWidth = 320, quality = 0.55) {
   });
 }
 
+// Like compressImage but takes a raw Blob — avoids `new File` which can be
+// mangled by Vite's minifier in production builds.
+function compressBlob(blob, maxWidth = 320, quality = 0.55) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = async () => {
+      URL.revokeObjectURL(url);
+      const drawToBlob = (w, h, q) => new Promise((res, rej) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        canvas.toBlob(b => b ? res(b) : rej(new Error("toBlob failed")), "image/jpeg", q);
+      });
+      try {
+        let scale = Math.min(1, maxWidth / img.width);
+        let w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        let result = await drawToBlob(w, h, quality);
+        if (result.size > 40 * 1024) {
+          scale = Math.min(1, 240 / img.width);
+          w = Math.round(img.width * scale); h = Math.round(img.height * scale);
+          result = await drawToBlob(w, h, 0.45);
+        }
+        if (result.size > 30 * 1024) result = await drawToBlob(w, h, 0.35);
+        resolve(result);
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
+    img.src = url;
+  });
+}
+
 function MenuTab() {
   const toast = useToast();
   const [dbCats, setDbCats] = useState([]);
@@ -3620,9 +3652,8 @@ function SettingsTab({ riders, setRiders, onLogout, busy, setBusy, busySaving, s
           const originalBlob = await res.blob();
           const originalSize = originalBlob.size;
 
-          // Compress it
-          const file = new File([originalBlob], "img.jpg", { type: "image/jpeg" });
-          const compressed = await compressImage(file);
+          // Compress it — use blob directly to avoid `new File` minification issues
+          const compressed = await compressBlob(originalBlob);
 
           // Only re-upload if we actually saved >10%
           if (compressed.size >= originalSize * 0.9) {
