@@ -2313,16 +2313,16 @@ function compressImage(file, maxWidth = 320, quality = 0.55) {
   });
 }
 
-// Like compressImage but takes a raw Blob — avoids `new File` which can be
-// mangled by Vite's minifier in production builds.
+// Like compressImage but takes a raw Blob — uses window.Image and window.URL
+// explicitly so Vite's minifier cannot rename them.
 function compressBlob(blob, maxWidth = 320, quality = 0.55) {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
+    const objUrl = window.URL.createObjectURL(blob);
+    const img = new window.Image();
     img.onload = async () => {
-      URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(objUrl);
       const drawToBlob = (w, h, q) => new Promise((res, rej) => {
-        const canvas = document.createElement("canvas");
+        const canvas = window.document.createElement("canvas");
         canvas.width = w; canvas.height = h;
         canvas.getContext("2d").drawImage(img, 0, 0, w, h);
         canvas.toBlob(b => b ? res(b) : rej(new Error("toBlob failed")), "image/jpeg", q);
@@ -2340,8 +2340,8 @@ function compressBlob(blob, maxWidth = 320, quality = 0.55) {
         resolve(result);
       } catch (e) { reject(e); }
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
-    img.src = url;
+    img.onerror = () => { window.URL.revokeObjectURL(objUrl); reject(new Error("Image load failed")); };
+    img.src = objUrl;
   });
 }
 
