@@ -2263,22 +2263,50 @@ function AddonBuilder({ addons, onChange }) {
 //  MENU MANAGEMENT TAB
 // ─────────────────────────────────────────────────────────
 // ── Image compression helper ─────────────────────────────
-// Resizes to max 400px wide and compresses to 65% JPEG quality before upload.
-// Reduces typical food photo from ~500KB down to ~15-20KB — plenty for a menu thumbnail.
-function compressImage(file, maxWidth = 400, quality = 0.65) {
+// Smart multi-pass compressor — targets ~30KB max for menu thumbnails.
+// Pass 1: resize to 320px wide at 55% quality.
+// Pass 2: if still >40KB, drop to 240px at 45% quality.
+// Pass 3: if still >30KB, drop quality to 35% (keeps dimensions).
+// This typically brings a 300-500KB food photo down to 15-35KB.
+function compressImage(file, maxWidth = 320, quality = 0.55) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
-    img.onload = () => {
+    img.onload = async () => {
       URL.revokeObjectURL(url);
-      const scale = Math.min(1, maxWidth / img.width);
-      const w = Math.round(img.width * scale);
-      const h = Math.round(img.height * scale);
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Compression failed")), "image/jpeg", quality);
+
+      const drawToBlob = (w, h, q) => new Promise((res, rej) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        canvas.toBlob(b => b ? res(b) : rej(new Error("toBlob failed")), "image/jpeg", q);
+      });
+
+      try {
+        // Pass 1 — 320px, 55%
+        let scale = Math.min(1, maxWidth / img.width);
+        let w = Math.round(img.width * scale);
+        let h = Math.round(img.height * scale);
+        let blob = await drawToBlob(w, h, quality);
+
+        // Pass 2 — still >40KB? drop to 240px, 45%
+        if (blob.size > 40 * 1024) {
+          scale = Math.min(1, 240 / img.width);
+          w = Math.round(img.width * scale);
+          h = Math.round(img.height * scale);
+          blob = await drawToBlob(w, h, 0.45);
+        }
+
+        // Pass 3 — still >30KB? drop quality to 35%, keep dimensions
+        if (blob.size > 30 * 1024) {
+          blob = await drawToBlob(w, h, 0.35);
+        }
+
+        resolve(blob);
+      } catch (e) {
+        reject(e);
+      }
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
     img.src = url;
@@ -3557,6 +3585,78 @@ function SettingsTab({ riders, setRiders, onLogout, busy, setBusy, busySaving, s
   // Busy mode (state lifted to AdminApp root for top-bar toggle access)
   const [busyLoaded, setBusyLoaded] = useState(false);
 
+  // ── Bulk image recompress ──
+  const [recompressing, setRecompressing] = useState(false);
+  const [recompressLog, setRecompressLog] = useState([]);
+
+  const bulkRecompress = async () => {
+    setRecompressing(true);
+    setRecompressLog([]);
+    const log = (msg) => setRecompressLog(prev => [...prev, msg]);
+
+    try {
+      // Fetch all menu items and categories with Supabase storage images
+      const [{ data: menuItems }, { data: categories }] = await Promise.all([
+        supabase.from("menu_items").select("id, name, img").not("img", "is", null),
+        supabase.from("categories").select("id, label, img").not("img", "is", null),
+      ]);
+
+      const supabaseBase = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/menu-images/`;
+
+      const toProcess = [
+        ...(menuItems || []).filter(i => i.img?.includes("/menu-images/")).map(i => ({ ...i, table: "menu_items", nameField: "name" })),
+        ...(categories || []).filter(i => i.img?.includes("/menu-images/")).map(i => ({ ...i, name: i.label, table: "categories", nameField: "label" })),
+      ];
+
+      log(`Found ${toProcess.length} Supabase-hosted images to recompress…`);
+
+      let done = 0, skipped = 0, failed = 0;
+
+      for (const item of toProcess) {
+        try {
+          // Fetch the image as a blob
+          const res = await fetch(item.img);
+          if (!res.ok) { log(`⚠️ Skip ${item.name} — fetch failed`); failed++; continue; }
+          const originalBlob = await res.blob();
+          const originalSize = originalBlob.size;
+
+          // Compress it
+          const file = new File([originalBlob], "img.jpg", { type: "image/jpeg" });
+          const compressed = await compressImage(file);
+
+          // Only re-upload if we actually saved >10%
+          if (compressed.size >= originalSize * 0.9) {
+            log(`→ Skip ${item.name} — already small (${Math.round(originalSize/1024)}KB)`);
+            skipped++;
+            continue;
+          }
+
+          // Re-upload to same path
+          const storagePath = item.img.replace(supabaseBase, "");
+          const { error } = await supabase.storage.from("menu-images").upload(storagePath, compressed, {
+            contentType: "image/jpeg", upsert: true, cacheControl: "31536000",
+          });
+
+          if (error) { log(`❌ ${item.name} — upload error: ${error.message}`); failed++; continue; }
+
+          log(`✅ ${item.name}: ${Math.round(originalSize/1024)}KB → ${Math.round(compressed.size/1024)}KB`);
+          done++;
+        } catch (e) {
+          log(`❌ ${item.name} — ${e.message}`);
+          failed++;
+        }
+      }
+
+      log(`\nDone! ✅ ${done} recompressed, ⏭️ ${skipped} skipped, ❌ ${failed} failed.`);
+      if (done > 0) toast.success(`Recompressed ${done} images!`);
+    } catch (e) {
+      log(`Fatal error: ${e.message}`);
+      toast.error("Recompress failed — check console.");
+    } finally {
+      setRecompressing(false);
+    }
+  };
+
   // Wait times
   const [waitTimes, setWaitTimes] = useState(() => {
     try { return JSON.parse(localStorage.getItem("bp_wait_times") || '{"dine-in":15,"takeaway":20,"delivery":40}'); } catch { return { "dine-in": 15, takeaway: 20, delivery: 40 }; }
@@ -3770,6 +3870,25 @@ function SettingsTab({ riders, setRiders, onLogout, busy, setBusy, busySaving, s
             </div>
           ))}
         </div>
+      </Section>
+
+      {/* ── BULK IMAGE RECOMPRESS ── */}
+      <Section title="🗜️ Image Optimiser">
+        <p className="text-xs text-stone-500 mb-3">
+          Re-compress all existing menu &amp; category images in Supabase storage to reduce egress usage. Only images that can be meaningfully compressed will be updated.
+        </p>
+        <button
+          onClick={bulkRecompress}
+          disabled={recompressing}
+          className="w-full bg-orange-500 text-white py-2.5 rounded-xl text-xs font-bold disabled:opacity-60 flex items-center justify-center gap-1.5 mb-3"
+        >
+          {recompressing ? "⏳ Recompressing…" : "🗜️ Recompress All Images Now"}
+        </button>
+        {recompressLog.length > 0 && (
+          <div className="bg-stone-900 text-green-400 rounded-xl p-3 text-[10px] font-mono max-h-48 overflow-y-auto space-y-0.5">
+            {recompressLog.map((line, i) => <div key={i}>{line}</div>)}
+          </div>
+        )}
       </Section>
 
       {/* ── LOGOUT ── */}
