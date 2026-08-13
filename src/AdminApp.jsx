@@ -405,16 +405,29 @@ function buildReceiptHTML(order, settings = {}, isKOT = false) {
       <td align="right" style="width:28%">Amt</td>
     </tr>
     ${items.map(it => {
-      const rate = Number(it.finalPrice || it.price || 0);
       const qty  = Number(it.qty || 1);
+      // Parse addon prices out of labels like "Cold Coffee +₹99"
+      // Base price = finalPrice minus sum of all addon prices
+      const addonPriceMap = (it.addonLabels || []).map(label => {
+        const m = label.match(/\+₹(\d+)/);
+        return { label, price: m ? Number(m[1]) : 0 };
+      });
+      const addonSum = addonPriceMap.reduce((s, a) => s + a.price, 0);
+      const baseRate = Number(it.finalPrice || it.price || 0) - addonSum;
       return `
       <tr class="item-row">
         <td>${it.name}${it.selectedVariant ? `<br/><span style="font-size:12px">(${it.selectedVariant})</span>` : ""}</td>
         <td align="center">${qty}</td>
-        <td align="right">Rs.${rate.toFixed(0)}</td>
-        <td align="right">Rs.${(rate*qty).toFixed(0)}</td>
+        <td align="right">Rs.${baseRate.toFixed(0)}</td>
+        <td align="right">Rs.${(baseRate*qty).toFixed(0)}</td>
       </tr>
-      ${it.addonLabels?.length ? `<tr><td class="addon" colspan="4">+ ${it.addonLabels.join(", ")}</td></tr>` : ""}`;
+      ${addonPriceMap.map(a => `
+      <tr style="font-size:12px;color:#555;">
+        <td style="padding-left:10px;">+ ${a.label.replace(/\s*\+₹\d+/, "")}</td>
+        <td align="center">${qty}</td>
+        <td align="right">${a.price > 0 ? `Rs.${a.price}` : "-"}</td>
+        <td align="right">${a.price > 0 ? `Rs.${(a.price*qty).toFixed(0)}` : "-"}</td>
+      </tr>`).join("")}`;
     }).join("")}
   </table>
 
