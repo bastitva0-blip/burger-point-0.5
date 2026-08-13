@@ -431,7 +431,7 @@ function buildReceiptHTML(order, settings = {}, isKOT = false) {
         <td align="right">Rs.${(baseRate*qty).toFixed(0)}</td>
       </tr>
       ${addonPriceMap.map(a => `
-      <tr style="font-size:12px;color:#555;">
+      <tr style="font-size:12px;color:#000;">
         <td style="padding-left:10px;">+ ${a.label.replace(/\s*\+₹\d+/, "")}</td>
         <td align="center">${qty}</td>
         <td align="right">${a.price > 0 ? `Rs.${a.price}` : "-"}</td>
