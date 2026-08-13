@@ -134,7 +134,7 @@ export function buildKOT(order) {
     } else {
       cmds.push(pRow(name, qty));
     }
-    if (it.addonLabels?.length) cmds.push("  + " + it.addonLabels.join(", "));
+    if (it.addonLabels?.length) it.addonLabels.forEach(a => cmds.push("  + " + a));
   }
 
   cmds.push(pDiv("-"));
@@ -203,12 +203,21 @@ export function buildInvoice(order, settings = {}) {
   );
 
   for (const it of items) {
+    const addonPrices = (it.addonLabels || []).map(l => { const m = l.match(/\+₹(\d+)/); return { label: l, price: m ? Number(m[1]) : 0 }; });
+    const addonSum2   = addonPrices.reduce((s, a) => s + a.price, 0);
+    const baseRate2   = Number(it.finalPrice || it.price || 0) - addonSum2;
+    const qty2        = Number(it.qty || 1);
     const name  = (it.name + (it.selectedVariant ? ` (${it.selectedVariant})` : "")).slice(0, COL.name);
-    const qty   = String(it.qty || 1).padStart(COL.qty);
-    const rate  = ("Rs." + Number(it.finalPrice || it.price || 0).toFixed(0)).padStart(COL.price);
-    const amt   = ("Rs." + (Number(it.finalPrice || it.price || 0) * Number(it.qty || 1)).toFixed(0)).padStart(COL.amt);
+    const qty   = String(qty2).padStart(COL.qty);
+    const rate  = ("Rs." + baseRate2.toFixed(0)).padStart(COL.price);
+    const amt   = ("Rs." + (baseRate2 * qty2).toFixed(0)).padStart(COL.amt);
     cmds.push(name.padEnd(COL.name) + " " + qty + " " + rate + " " + amt);
-    if (it.addonLabels?.length) cmds.push("  +Addons: " + it.addonLabels.join(", "));
+    addonPrices.forEach(a => {
+      const aLabel = ("  + " + a.label.replace(/\s*\+₹\d+/, "")).slice(0, COL.name);
+      const aRate  = (a.price > 0 ? "Rs." + a.price : "-").padStart(COL.price);
+      const aAmt   = (a.price > 0 ? "Rs." + (a.price * qty2).toFixed(0) : "-").padStart(COL.amt);
+      cmds.push(aLabel.padEnd(COL.name) + " " + qty + " " + aRate + " " + aAmt);
+    });
   }
 
   // Totals
@@ -352,7 +361,7 @@ function buildReceiptHTML(order, settings = {}, isKOT = false) {
           <td>${it.name}${it.selectedVariant ? ` (${it.selectedVariant})` : ""}</td>
           <td align="right" style="font-size:18px;font-weight:900;">${it.qty || 1}</td>
         </tr>
-        ${it.addonLabels?.length ? `<tr><td class="addon" colspan="2">+ ${it.addonLabels.join(", ")}</td></tr>` : ""}
+        ${(it.addonLabels || []).map(a => `<tr><td class="addon" colspan="2">+ ${a}</td></tr>`).join("")}
       `).join("")}
     </table>
     ${order.note ? `<div class="div-dash"></div><div style="font-size:14px;"><b>Note:</b> ${order.note}</div>` : ""}
