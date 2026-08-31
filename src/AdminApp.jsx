@@ -519,7 +519,7 @@ export async function printKOT(order) {
 //  ADMIN LOGIN SCREEN
 // ─────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [email, setEmail]     = useState(import.meta.env.VITE_ADMIN_EMAIL || "");
+  const [email, setEmail] = useState("");
   const [pwd, setPwd]         = useState("");
   const [show, setShow]       = useState(false);
   const [err, setErr]         = useState("");
