@@ -45,6 +45,15 @@ const LS_ACTIVE_ORDER = "bp_active_order";   // persists across browser close
 const LS_BESTSELLERS  = "bp_bestsellers";    // cached bestseller IDs
 const LS_CUSTOMER     = "bp_customer";       // saved name + phone
 const LS_RESERVATION  = "bp_reservation";   // active reservation (persists across sessions)
+const LS_SESSION      = "bp_session_id";     // stable UUID per browser — scopes order reads
+
+// Returns a stable UUID for this browser. Generated once, persisted in
+// localStorage so the same customer can track their order across page reloads.
+const getSessionId = () => {
+  let s = lsGet(LS_SESSION);
+  if (!s) { s = crypto.randomUUID(); lsSet(LS_SESSION, s); }
+  return s;
+};
 const ACTIVE_STATUSES = new Set(["pending", "accepted", "ready", "dispatched"]);
 const SS_WAIT    = "bp_wait_times";
 
@@ -2824,6 +2833,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
       delivery_distance_km: distanceKm ?? null,
       customer_lat: customerInfo?.lat ?? null, customer_lng: customerInfo?.lng ?? null,
       created_at: new Date().toISOString(),
+      session_id: getSessionId(),
     };
 
     // ── Add-on request onto an existing open order, instead of a new one ──
@@ -2835,7 +2845,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     let addonTarget = null;
     if (SUPABASE_READY && orderType !== "delivery") {
       try {
-        let q = supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(1);
+        let q = supabase.from("orders").select("id,status,items,total,created_at,order_type,pending_addon_items,pending_addon_total,addon_requested_at").order("created_at", { ascending: false }).limit(1);
         if (orderType === "dine-in" && code) {
           q = q.eq("table_code", code);
         } else if (orderType === "takeaway" && customerInfo?.phone) {
@@ -2950,7 +2960,7 @@ export function CustomerApp({ code, tableLabel, orderType = "dine-in" }) {
     // Original order confirmed absent — insert a new one.
     // Use a fresh ID so there is no duplicate-key conflict if the original
     // row somehow appears between now and the insert.
-    const retryPayload = { ...payload, id: crypto.randomUUID() };
+    const retryPayload = { ...payload, id: crypto.randomUUID(), session_id: getSessionId() };
     try {
       const { error } = await supabase.from("orders").insert(retryPayload);
       if (error) throw error;
