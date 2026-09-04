@@ -997,18 +997,26 @@ https://maps.google.com/?q=${order.customer_lat},${order.customer_lng}`
             )}
           </div>
 
-          {/* Request Pickup — WhatsApp group blast for delivery orders */}
-          {order.order_type === "delivery" && (
-            <button
-              onClick={async () => {
-                const msg = buildPickupMessage(order, earningPerKm);
-                try { await navigator.clipboard.writeText(msg); } catch (_) {}
-                window.open(RIDER_GROUP_LINK, "_blank", "noopener,noreferrer");
-              }}
-              className="w-full mt-2 flex items-center justify-center gap-1.5 bg-green-500 text-white py-2.5 rounded-xl text-xs font-bold active:scale-95 transition-transform hover:bg-green-600 shadow-sm">
-              🛵 Request Pickup
-            </button>
-          )}
+          {/* Copy Rider Request — copies pickup message for delivery orders */}
+          {order.order_type === "delivery" && (() => {
+            const [copied, setCopied] = useState(false);
+            return (
+              <button
+                onClick={async () => {
+                  const msg = buildPickupMessage(order, earningPerKm);
+                  try { await navigator.clipboard.writeText(msg); } catch (_) {}
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2500);
+                }}
+                className={`w-full mt-2 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold active:scale-95 transition-all shadow-sm ${
+                  copied
+                    ? "bg-emerald-500 text-white"
+                    : "bg-green-500 text-white hover:bg-green-600"
+                }`}>
+                {copied ? "✅ Copied! Paste in WhatsApp group" : "📋 Copy Rider Group Message"}
+              </button>
+            );
+          })()}
 
           {/* Cancel order — only shown for active (non-terminal) orders */}
           {onCancel && !isTerminal && (
