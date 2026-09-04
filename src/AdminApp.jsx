@@ -638,57 +638,47 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function RideServiceButtons({ order, bizSettings }) {
-  const [desktopMsg, setDesktopMsg] = useState(null); // "rapido" | "porter" | null
+function RideServiceButtons({ order }) {
+  const [copiedAddr, setCopiedAddr] = useState(false);
+  const [copiedPhone, setCopiedPhone] = useState(false);
 
-  const isMobile = typeof navigator !== "undefined" &&
-    (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1);
+  const custAddr  = order.delivery_address || "";
+  const custLat   = order.customer_lat;
+  const custLng   = order.customer_lng;
+  const custPhone = order.customer_phone || order.phone || "";
 
-  const restAddr = bizSettings?.address  || "Burger Point, Lucknow";
-  const custAddr = order.delivery_address || "";
-  const custLat  = order.customer_lat;
-  const custLng  = order.customer_lng;
-
-  const copyAddresses = async () => {
-    const drop = (custLat && custLng)
+  const copyAddress = async () => {
+    const addr = (custLat && custLng)
       ? `${custAddr} (${Number(custLat).toFixed(6)}, ${Number(custLng).toFixed(6)})`
       : custAddr;
-    const text = `📍 Pickup: ${restAddr}\n🏁 Drop: ${drop}`;
-    try { await navigator.clipboard.writeText(text); } catch (_) {}
+    try { await navigator.clipboard.writeText(addr); } catch (_) {}
+    setCopiedAddr(true);
+    setTimeout(() => setCopiedAddr(false), 2500);
   };
 
-  const open = async (service, url) => {
-    if (!isMobile) {
-      setDesktopMsg(service);
-      setTimeout(() => setDesktopMsg(null), 4000);
-      return;
-    }
-    await copyAddresses();
-    window.open(url, "_blank", "noopener,noreferrer");
+  const copyPhone = async () => {
+    try { await navigator.clipboard.writeText(custPhone); } catch (_) {}
+    setCopiedPhone(true);
+    setTimeout(() => setCopiedPhone(false), 2500);
   };
 
   return (
-    <div className="mt-2 space-y-1.5">
-      {desktopMsg && (
-        <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center font-semibold">
-          📱 Open this page on your mobile to launch {desktopMsg === "rapido" ? "Rapido" : "Porter"}
-        </div>
-      )}
-      <div className="flex gap-2">
-        <button
-          onClick={() => open("rapido", "https://rapido.bike")}
-          className="flex-1 flex items-center justify-center gap-1 bg-yellow-400 text-yellow-900 text-[11px] font-bold py-1.5 rounded-lg active:scale-95 transition-transform hover:bg-yellow-300">
-          🏍️ Rapido
-        </button>
-        <button
-          onClick={() => open("porter", "https://porter.in")}
-          className="flex-1 flex items-center justify-center gap-1 bg-stone-900 text-white text-[11px] font-bold py-1.5 rounded-lg active:scale-95 transition-transform hover:bg-stone-700">
-          🚚 Porter
-        </button>
-      </div>
-      {isMobile && (
-        <p className="text-[10px] text-stone-400 text-center">Pickup &amp; drop addresses copied to clipboard on tap</p>
-      )}
+    <div className="mt-2 flex gap-2">
+      <button
+        onClick={copyAddress}
+        className={`flex-1 flex items-center justify-center gap-1 text-[11px] font-bold py-1.5 rounded-lg active:scale-95 transition-all ${
+          copiedAddr ? "bg-emerald-500 text-white" : "bg-blue-100 text-blue-800 hover:bg-blue-200"
+        }`}>
+        {copiedAddr ? "✅ Copied!" : "📋 Copy Address"}
+      </button>
+      <button
+        onClick={copyPhone}
+        disabled={!custPhone}
+        className={`flex-1 flex items-center justify-center gap-1 text-[11px] font-bold py-1.5 rounded-lg active:scale-95 transition-all ${
+          copiedPhone ? "bg-emerald-500 text-white" : "bg-purple-100 text-purple-800 hover:bg-purple-200"
+        } disabled:opacity-40 disabled:cursor-not-allowed`}>
+        {copiedPhone ? "✅ Copied!" : "📞 Copy Mobile"}
+      </button>
     </div>
   );
 }
@@ -4410,6 +4400,10 @@ function useOrderNotifications(orders, authed) {
   }
 
   const playChime = useCallback(() => {
+    // Skip audio on mobile/tablet — AudioContext on mobile browsers causes
+    // crashes and "Something went wrong" errors. Sound is desktop-only.
+    const isMobile = /Mobi|Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent);
+    if (isMobile) return;
     try {
       const ctx = getAudioCtx();
       const doPlay = () => {
