@@ -67,13 +67,20 @@ function buildPickupMessage(order, earningPerKm = 10) {
 // ─────────────────────────────────────────────────────────
 //  HELPERS
 // ─────────────────────────────────────────────────────────
-const normalise = row => ({
-  ...row,
-  time: new Date(row.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-  items: Array.isArray(row.items) ? row.items : [],
-});
+const normalise = row => {
+  let time;
+  try {
+    time = new Date(row.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    time = new Date(row.created_at).toTimeString().slice(0, 5);
+  }
+  return { ...row, time, items: Array.isArray(row.items) ? row.items : [] };
+};
 
-const currency = n => `₹${Number(n || 0).toLocaleString("en-IN")}`;
+const currency = n => {
+  try { return `₹${Number(n || 0).toLocaleString("en-IN")}`; }
+  catch { return `₹${Number(n || 0).toFixed(0)}`; }
+};
 
 // ─────────────────────────────────────────────────────────
 //  ESC/POS THERMAL PRINTER  (WebUSB — 80 mm roll, ~42 chars)
@@ -950,7 +957,7 @@ function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPri
 
           {/* Items */}
           <div className="py-3">
-            {order.items.map((it, i) => (
+            {(order.items || []).map((it, i) => (
               <div key={i} className="flex justify-between text-sm py-0.5">
                 <span className="text-stone-700">
                   {it.name}{it.selectedVariant ? ` (${it.selectedVariant})` : ""} ×{it.qty}
