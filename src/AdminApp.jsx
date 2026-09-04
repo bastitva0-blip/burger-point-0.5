@@ -4381,11 +4381,15 @@ function useOrderNotifications(orders, authed) {
   const [unreadCount, setUnreadCount] = useState(0);
 
   // Request browser notification permission once
+  // All browser notification / audio / tab-flash wiring is desktop-only.
+  // On mobile these APIs cause crashes or are silently blocked anyway.
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent);
+
   useEffect(() => {
-    if (authed && "Notification" in window && Notification.permission === "default") {
+    if (!isMobile && authed && "Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
-  }, [authed]);
+  }, [authed, isMobile]);
 
   // Reuse one AudioContext for the lifetime of the hook.
   // Mobile Safari caps concurrent AudioContexts at ~6 — creating a new one
@@ -4489,23 +4493,23 @@ function useOrderNotifications(orders, authed) {
       // Sound immediately
       playChime();
 
-      // Browser notification
-      if ("Notification" in window && Notification.permission === "granted") {
-        const o = newOrders[0];
-        const n = new Notification("🍔 New Order — Burger Point", {
-          body: `${o.table_label || o.customer_name || "Customer"} · ₹${o.total}`,
-          tag: "bp-order", renotify: true,
-        });
-        setTimeout(() => n.close(), 7000);
+      // Browser notification + tab flash — desktop only
+      if (!isMobile) {
+        if ("Notification" in window && Notification.permission === "granted") {
+          const o = newOrders[0];
+          const n = new Notification("🍔 New Order — Burger Point", {
+            body: `${o.table_label || o.customer_name || "Customer"} · ₹${o.total}`,
+            tag: "bp-order", renotify: true,
+          });
+          setTimeout(() => n.close(), 7000);
+        }
+        startFlash(count);
       }
-
-      // Flash tab
-      startFlash(count);
 
       // Repeat every 15s while unacked
       clearInterval(repeatRef.current);
       repeatRef.current = setInterval(() => {
-        if (unackedRef.current.size > 0) { playChime(); startFlash(unackedRef.current.size); }
+        if (unackedRef.current.size > 0) { playChime(); if (!isMobile) startFlash(unackedRef.current.size); }
         else { clearInterval(repeatRef.current); }
       }, 15000);
     }
@@ -4536,7 +4540,7 @@ function useOrderNotifications(orders, authed) {
       );
       if (stuck.length > 0) {
         playChime();
-        startFlash(stuck.length);
+        if (!isMobile) startFlash(stuck.length);
       }
     }, 60000);
     return () => clearInterval(stuckAlertRef.current);
