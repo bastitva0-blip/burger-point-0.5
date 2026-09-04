@@ -631,6 +631,24 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+function CopyPickupButton({ order, earningPerKm }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        const msg = buildPickupMessage(order, earningPerKm);
+        try { await navigator.clipboard.writeText(msg); } catch (_) {}
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2500);
+      }}
+      className={`w-full mt-2 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold active:scale-95 transition-all shadow-sm ${
+        copied ? "bg-emerald-500 text-white" : "bg-green-500 text-white hover:bg-green-600"
+      }`}>
+      {copied ? "✅ Copied! Paste in WhatsApp group" : "📋 Copy Rider Group Message"}
+    </button>
+  );
+}
+
 // ─────────────────────────────────────────────────────────
 //  ORDER CARD
 // ─────────────────────────────────────────────────────────
@@ -998,25 +1016,9 @@ https://maps.google.com/?q=${order.customer_lat},${order.customer_lng}`
           </div>
 
           {/* Copy Rider Request — copies pickup message for delivery orders */}
-          {order.order_type === "delivery" && (() => {
-            const [copied, setCopied] = useState(false);
-            return (
-              <button
-                onClick={async () => {
-                  const msg = buildPickupMessage(order, earningPerKm);
-                  try { await navigator.clipboard.writeText(msg); } catch (_) {}
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2500);
-                }}
-                className={`w-full mt-2 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold active:scale-95 transition-all shadow-sm ${
-                  copied
-                    ? "bg-emerald-500 text-white"
-                    : "bg-green-500 text-white hover:bg-green-600"
-                }`}>
-                {copied ? "✅ Copied! Paste in WhatsApp group" : "📋 Copy Rider Group Message"}
-              </button>
-            );
-          })()}
+          {order.order_type === "delivery" && (
+            <CopyPickupButton order={order} earningPerKm={earningPerKm} />
+          )}
 
           {/* Cancel order — only shown for active (non-terminal) orders */}
           {onCancel && !isTerminal && (
@@ -4332,10 +4334,21 @@ function useOrderNotifications(orders, authed) {
     }
   }, [authed]);
 
+  // Reuse one AudioContext for the lifetime of the hook.
+  // Mobile Safari caps concurrent AudioContexts at ~6 — creating a new one
+  // on every chime (which can fire every 15s + 60s stuck check) blows past
+  // that cap quickly and crashes the page on mobile.
+  const audioCtxRef = useRef(null);
+  function getAudioCtx() {
+    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return audioCtxRef.current;
+  }
+
   const playChime = useCallback(() => {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      // Mobile browsers suspend AudioContext until a user gesture — resume it first
+      const ctx = getAudioCtx();
       const doPlay = () => {
         const master = ctx.createGain();
         master.gain.value = 0.65;
@@ -4476,6 +4489,7 @@ function useOrderNotifications(orders, authed) {
     clearInterval(repeatRef.current);
     clearInterval(flashRef.current);
     document.title = "Burger Point Admin";
+    audioCtxRef.current?.close().catch(() => {});
   }, []);
 
   const acknowledge = useCallback(() => dismissPopup(), [dismissPopup]);
