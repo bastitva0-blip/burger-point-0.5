@@ -17,6 +17,54 @@ import { SUPABASE_READY, STATUS_CFG, getNextStep, CATEGORIES, DEFAULT_MENU, ALL_
 import { useBusinessSettings } from "./useBusinessSettings.js";
 
 // ─────────────────────────────────────────────────────────
+//  RIDER GROUP CONFIG
+//  Replace this with your actual WhatsApp group invite link.
+//  e.g. "https://chat.whatsapp.com/AbCdEfGhIjK"
+// ─────────────────────────────────────────────────────────
+const RIDER_GROUP_LINK = "https://chat.whatsapp.com/DYiZE1enhbE2oklsgwdvUf";
+
+function buildPickupMessage(order, earningPerKm = 10) {
+  const orderId = String(order.id ?? "").slice(-6).toUpperCase() || "------";
+  const address = order.delivery_address || "No address provided";
+  const total   = Number(order.total || 0).toLocaleString("en-IN");
+  const payment = (order.payment_method || "PENDING").toUpperCase();
+  const isPaid  = payment !== "PENDING" && payment !== "CASH";
+  const payTag  = isPaid ? "PAID" : payment;
+
+  // Prefer OSRM road distance (route_distance_km, set on rider assign),
+  // fall back to straight-line haversine distance (delivery_distance_km, set on order place).
+  const km      = Number(order.route_distance_km || order.delivery_distance_km || 0);
+  const payout  = km > 0 ? Math.round(km * earningPerKm) : null;
+  const payoutLine = payout !== null
+    ? `\n💵 Payout: ₹${payout} (${km}km × ₹${earningPerKm}/km)`
+    : `\n💵 Payout: TBD (distance not yet calculated)`;
+
+  const itemLines = (order.items || [])
+    .map(it => {
+      const variant = it.selectedVariant ? ` (${it.selectedVariant})` : "";
+      return `  • ${it.name}${variant} ×${it.qty}`;
+    })
+    .join("\n");
+
+  const mapsLink =
+    order.customer_lat && order.customer_lng
+      ? `\n🗺️ https://maps.google.com/?q=${order.customer_lat},${order.customer_lng}`
+      : "";
+
+  const note = order.note ? `\n📝 Note: ${order.note}` : "";
+
+  return (
+    `🛵 *Delivery Request*\n` +
+    `Order #${orderId}\n` +
+    `📍 ${address}${mapsLink}\n` +
+    `💰 Rs.${total} (${payTag})` +
+    payoutLine + `\n` +
+    `📦 Items:\n${itemLines}` +
+    note
+  );
+}
+
+// ─────────────────────────────────────────────────────────
 //  HELPERS
 // ─────────────────────────────────────────────────────────
 const normalise = row => ({
@@ -677,6 +725,8 @@ function RiderFallbackControls({ order, onAdvance }) {
 function OrderCard({ order, onAdvance, onCancel, riders, onAssignDispatch, onPrintKOT, onPrintInvoice, isAddOn }) {
   const [open, setOpen] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
+  const { settings: bizSettings } = useBusinessSettings();
+  const earningPerKm = Number(bizSettings?.earning_per_km ?? 10);
   const ns = getNextStep(order);
   const cfg = STATUS_CFG[order.status] || STATUS_CFG.pending;
   const typeEmoji = order.order_type === "delivery" ? "🛵" : order.order_type === "takeaway" ? "📦" : "🍽️";
@@ -946,6 +996,19 @@ https://maps.google.com/?q=${order.customer_lat},${order.customer_lng}`
               </a>
             )}
           </div>
+
+          {/* Request Pickup — WhatsApp group blast for delivery orders */}
+          {order.order_type === "delivery" && (
+            <button
+              onClick={async () => {
+                const msg = buildPickupMessage(order, earningPerKm);
+                try { await navigator.clipboard.writeText(msg); } catch (_) {}
+                window.open(RIDER_GROUP_LINK, "_blank", "noopener,noreferrer");
+              }}
+              className="w-full mt-2 flex items-center justify-center gap-1.5 bg-green-500 text-white py-2.5 rounded-xl text-xs font-bold active:scale-95 transition-transform hover:bg-green-600 shadow-sm">
+              🛵 Request Pickup
+            </button>
+          )}
 
           {/* Cancel order — only shown for active (non-terminal) orders */}
           {onCancel && !isTerminal && (
