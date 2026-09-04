@@ -4587,7 +4587,15 @@ export default function AdminApp() {
   const fetchOrders = useCallback(async () => {
     if (!SUPABASE_READY) return;
     setLoading(true);
-    const { data, error } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
+    // Limit to today's orders only — fetching all historical orders every poll
+    // is the single biggest egress driver. Sales/history tab queries separately.
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id,created_at,status,order_type,table_label,customer_name,customer_phone,items,total,note,payment_method,delivery_address,customer_lat,customer_lng,rider_name,rider_phone,rider_id,rider_status,route_distance_km,route_eta_minutes,delivery_started_at,cancel_reason,cancelled_at,promo_code,discount,pending_addon_items,pending_addon_total,addon_requested_at,route_geometry")
+      .gte("created_at", todayStart.toISOString())
+      .order("created_at", { ascending: false });
     setLoading(false);
     if (!error && data) { setOrders(normaliseAll(data)); setOnline(true); } else setOnline(false);
   }, [normaliseAll]);
@@ -4662,13 +4670,15 @@ export default function AdminApp() {
         }
       });
 
-    // Poll every 5s as a safety net alongside Realtime — if the Supabase
-    // project's "orders" table doesn't have Realtime replication turned on
-    // (Database → Replication → supabase_realtime → toggle "orders"),
-    // updates like a customer's "Add More Items" request would otherwise
-    // only show up on the next 2-minute refresh or a manual tap. 5s makes
-    // it feel near-instant either way, Realtime-on or not.
-    const autoRefresh = setInterval(() => fetchOrders(), 5000); return () => { clearFallback(); supabase.removeChannel(ch); clearInterval(autoRefresh); };
+    // No constant polling — Realtime handles live updates.
+    // Only refetch when the admin comes back to the tab after being away,
+    // to catch anything missed while the tab was hidden.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") fetchOrders();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => { clearFallback(); supabase.removeChannel(ch); document.removeEventListener("visibilitychange", onVisible); };
   }, [authed, fetchOrders]);
 
   const updateStatus = async (id, status, extra = {}) => {
