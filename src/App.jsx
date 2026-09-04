@@ -125,9 +125,18 @@ export default function App() {
     return <LandingPage installPrompt={installPrompt} />;
   })();
 
-  const boundaryLabel =
-    page === "admin"  ? "Admin dashboard" :
-    page === "rider"  ? "Rider app"       : "This page";
+  // Admin app has no ErrorBoundary — the boundary was causing a constant
+  // "Something went wrong" screen on mobile whenever a new order arrived.
+  // Other routes keep the boundary as a safety net.
+  if (page === "admin") {
+    return (
+      <Suspense fallback={fallback}>
+        {content}
+      </Suspense>
+    );
+  }
+
+  const boundaryLabel = page === "rider" ? "Rider app" : "This page";
 
   return (
     <ErrorBoundary label={boundaryLabel}>
