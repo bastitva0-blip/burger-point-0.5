@@ -2939,7 +2939,24 @@ function SalesHistoryCard({ o }) {
   );
 }
 
-function SalesTab({ orders, loading }) {
+function SalesTab() {
+  const [orders,  setOrders]  = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!SUPABASE_READY) { setLoading(false); return; }
+    // Fetch last 30 days — enough for the 7-day chart + recent history
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+    since.setHours(0, 0, 0, 0);
+    supabase
+      .from("orders")
+      .select("id,created_at,status,order_type,total,payment_method,table_label,customer_name,items,cancel_reason")
+      .gte("created_at", since.toISOString())
+      .order("created_at", { ascending: false })
+      .then(({ data }) => { if (data) setOrders(data); setLoading(false); });
+  }, []);
+
   if (loading && orders.length === 0) return <SalesSkeleton />;
   const revenueOrders = orders.filter(o => o.status !== "cancelled");
   const today = new Date();
@@ -3067,8 +3084,21 @@ function SalesTab({ orders, loading }) {
 // ─────────────────────────────────────────────────────────
 //  CUSTOMERS TAB
 // ─────────────────────────────────────────────────────────
-function CustomersTab({ orders, loading }) {
-  const [search, setSearch] = useState("");
+function CustomersTab() {
+  const [orders,  setOrders]  = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search,  setSearch]  = useState("");
+
+  useEffect(() => {
+    if (!SUPABASE_READY) { setLoading(false); return; }
+    supabase
+      .from("orders")
+      .select("customer_phone,customer_name,total,created_at")
+      .not("customer_phone", "is", null)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => { if (data) setOrders(data); setLoading(false); });
+  }, []);
+
   if (loading && orders.length === 0) return (
     <div className="space-y-2 pt-2">
       {Array.from({ length: 6 }).map((_, i) => <CustomerRowSkeleton key={i} />)}
@@ -5113,8 +5143,8 @@ export default function AdminApp() {
 
         {tab === "tables"    && <TablesTab orders={orders} />}
         {tab === "menu"      && <MenuTab />}
-        {tab === "sales"     && <SalesTab orders={orders} loading={loading} />}
-        {tab === "customers" && <CustomersTab orders={orders} loading={loading} />}
+        {tab === "sales"     && <SalesTab />}
+        {tab === "customers" && <CustomersTab />}
         {tab === "riders"    && <RidersTab />}
         {tab === "settings"  && <SettingsTab riders={riders} setRiders={setRiders} onLogout={logout} busy={busy} setBusy={setBusy} busySaving={busySaving} setBusySaving={setBusySaving} />}
       </div>
