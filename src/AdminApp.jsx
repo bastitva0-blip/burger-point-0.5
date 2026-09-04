@@ -631,6 +631,61 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+function RideServiceButtons({ order, bizSettings }) {
+  const [desktopMsg, setDesktopMsg] = useState(null); // "rapido" | "porter" | null
+
+  const isMobile = typeof navigator !== "undefined" &&
+    (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1);
+
+  const restAddr = bizSettings?.address  || "Burger Point, Lucknow";
+  const custAddr = order.delivery_address || "";
+  const custLat  = order.customer_lat;
+  const custLng  = order.customer_lng;
+
+  const copyAddresses = async () => {
+    const drop = (custLat && custLng)
+      ? `${custAddr} (${Number(custLat).toFixed(6)}, ${Number(custLng).toFixed(6)})`
+      : custAddr;
+    const text = `📍 Pickup: ${restAddr}\n🏁 Drop: ${drop}`;
+    try { await navigator.clipboard.writeText(text); } catch (_) {}
+  };
+
+  const open = async (service, url) => {
+    if (!isMobile) {
+      setDesktopMsg(service);
+      setTimeout(() => setDesktopMsg(null), 4000);
+      return;
+    }
+    await copyAddresses();
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      {desktopMsg && (
+        <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center font-semibold">
+          📱 Open this page on your mobile to launch {desktopMsg === "rapido" ? "Rapido" : "Porter"}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          onClick={() => open("rapido", "https://rapido.bike")}
+          className="flex-1 flex items-center justify-center gap-1 bg-yellow-400 text-yellow-900 text-[11px] font-bold py-1.5 rounded-lg active:scale-95 transition-transform hover:bg-yellow-300">
+          🏍️ Rapido
+        </button>
+        <button
+          onClick={() => open("porter", "https://porter.in")}
+          className="flex-1 flex items-center justify-center gap-1 bg-stone-900 text-white text-[11px] font-bold py-1.5 rounded-lg active:scale-95 transition-transform hover:bg-stone-700">
+          🚚 Porter
+        </button>
+      </div>
+      {isMobile && (
+        <p className="text-[10px] text-stone-400 text-center">Pickup &amp; drop addresses copied to clipboard on tap</p>
+      )}
+    </div>
+  );
+}
+
 function CopyPickupButton({ order, earningPerKm }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -943,6 +998,7 @@ https://maps.google.com/?q=${order.customer_lat},${order.customer_lng}`
                     </div>
                   )}
                 </div>
+                <RideServiceButtons order={order} bizSettings={bizSettings} />
               </div>
             )}
             {order.promo_code && (
